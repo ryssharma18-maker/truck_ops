@@ -1,10 +1,10 @@
-import { requireUser } from "@/auth";
+import { requirePageUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const user = await requireUser();
+  const user = await requirePageUser();
 
   const rows = await prisma.truck.findMany({ where: { userId: user.id, status: "maintenance" }, take: 100 });
   const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).filter((k) => k !== "userId") : [];

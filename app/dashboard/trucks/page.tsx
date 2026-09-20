@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { requireUser } from "@/auth";
+import { requirePageUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export default async function TrucksPage() {
-  const user = await requireUser();
+  const user = await requirePageUser();
 
   const trucks = await prisma.truck.findMany({
     where: {

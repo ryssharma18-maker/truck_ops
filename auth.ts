@@ -136,3 +136,17 @@ export function serialize<T>(value: T): T {
     ),
   );
 }
+
+
+/** For server components/pages: redirect to /login instead of throwing a 500 when logged out. */
+export async function requirePageUser(): Promise<Awaited<ReturnType<typeof requireUser>>> {
+  const { redirect } = await import("next/navigation");
+  try {
+    return await requireUser();
+  } catch (e) {
+    const err = e as any;
+    const unauth = err?.status === 401 || err?.statusCode === 401 || err?.code === "unauthenticated" || /not authenticated/i.test(String(err?.message ?? ""));
+    if (unauth) redirect("/login");
+    throw e;
+  }
+}

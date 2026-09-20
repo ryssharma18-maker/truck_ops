@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { requireUser } from "@/auth";
+import { requirePageUser } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export default async function DashboardPage() {
-  const user = await requireUser();
+  const user = await requirePageUser();
 
   const [
     truckCount,

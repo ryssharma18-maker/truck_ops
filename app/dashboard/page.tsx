@@ -1,303 +1,207 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { requirePageUser } from "@/auth";
+import {
+  Truck,
+  Users,
+  Route,
+  Bell,
+  Wrench,
+  DollarSign,
+  Ship,
+  ArrowRight,
+  FileText,
+} from "lucide-react";
+import { Prisma } from "@prisma/client";
+import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { shippingSummary } from "@/lib/services/shippingService";
+import {
+  DataTable,
+  TableRow,
+  Cell,
+  PageHeader,
+  StatCard,
+  StatusPill,
+  formatDate,
+  formatMoney,
+} from "@/components/ui/dashboard";
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Dashboard | TruckOps AI" };
+
+const DAY = 24 * 60 * 60 * 1000;
 
 export default async function DashboardPage() {
   const user = await requirePageUser();
+  const userId = user.id;
+  const in30 = new Date(Date.now() + 30 * DAY);
 
   const [
     truckCount,
-    activeTruckCount,
+    activeTrucks,
+    maintenanceTrucks,
     driverCount,
-    activeTripCount,
-    openAlertCount,
-    maintenanceCount,
+    activeTrips,
+    unreadAlerts,
+    openInvoices,
+    outstanding,
+    recentLoads,
+    pendingExtraction,
+    complianceExpiring,
+    shipping,
   ] = await Promise.all([
-    prisma.truck.count({
-      where: { userId: user.id },
+    prisma.truck.count({ where: { userId } }),
+    prisma.truck.count({ where: { userId, status: "active" } }),
+    prisma.truck.count({ where: { userId, status: "maintenance" } }),
+    prisma.driver.count({ where: { userId } }),
+    prisma.load.count({ where: { userId, status: { in: ["pending", "in_transit"] } } }),
+    prisma.notification.count({ where: { userId, read: false } }),
+    prisma.invoice.count({
+      where: { userId, status: { in: ["draft", "sent", "submitted_to_factor", "overdue"] } },
     }),
-
-    prisma.truck.count({
-      where: {
-        userId: user.id,
-        status: "active",
+    prisma.invoice.aggregate({
+      where: { userId, status: { in: ["sent", "submitted_to_factor", "overdue", "disputed"] } },
+      _sum: { totalAmount: true },
+    }),
+    prisma.load.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      include: {
+        truck: { select: { id: true, truckNumber: true } },
+        driver: { select: { id: true, fullName: true } },
+        broker: { select: { id: true, companyName: true } },
       },
     }),
-
-    prisma.driver.count({
-      where: {
-        userId: user.id,
-      },
-    }),
-
-    prisma.load.count({
-      where: {
-        userId: user.id,
-        status: "in_transit",
-      },
-    }),
-
-    prisma.notification.count({
-      where: {
-        userId: user.id,
-        read: false,
-      },
-    }),
-
-    prisma.truck.count({ where: { userId: user.id, status: "maintenance" } }),
+    prisma.document.count({ where: { userId, aiExtractedData: { equals: Prisma.DbNull } } }),
+    prisma.complianceDocument.count({ where: { userId, expiryDate: { lte: in30 } } }),
+    shippingSummary(userId),
   ]);
 
-  const recentTrips = await prisma.load.findMany({
-    where: {
-      userId: user.id,
-    },
-    include: {
-      truck: true,
-      driver: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 5,
-  });
-
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <div className="flex min-h-screen">
+    <div className="space-y-8 p-6 pt-8 lg:p-8">
+      <PageHeader
+        title="Fleet Command Center"
+        subtitle={`Welcome back${user.fullName ? `, ${user.fullName}` : ""}. Here is your operation at a glance.`}
+      />
 
-        <aside className="hidden w-64 border-r border-slate-800 bg-slate-900/80 p-6 lg:block">
-          <div className="mb-10">
-            <div className="text-2xl font-black">
-              🚛 TruckOps
-            </div>
-            <div className="text-xs text-cyan-400">
-              AI OPERATIONS
-            </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Trucks"
+          value={truckCount}
+          hint={`${activeTrucks} active · ${maintenanceTrucks} in maintenance`}
+          icon={<Truck className="h-4 w-4 text-sky-400" />}
+        />
+        <StatCard
+          label="Drivers"
+          value={driverCount}
+          icon={<Users className="h-4 w-4 text-cyan-400" />}
+        />
+        <StatCard
+          label="Active loads"
+          value={activeTrips}
+          icon={<Route className="h-4 w-4 text-emerald-400" />}
+        />
+        <StatCard
+          label="Outstanding receivables"
+          value={formatMoney(outstanding._sum.totalAmount?.toNumber() ?? 0)}
+          hint={`${openInvoices} open invoice${openInvoices === 1 ? "" : "s"}`}
+          icon={<DollarSign className="h-4 w-4 text-amber-400" />}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Link
+          href="/dashboard/alerts"
+          className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4 transition-colors hover:border-slate-700"
+        >
+          <span className="flex items-center gap-3">
+            <Bell className="h-4 w-4 text-rose-400" />
+            <span className="text-sm text-slate-300">Unread alerts</span>
+          </span>
+          <span className="text-lg font-bold text-white">{unreadAlerts}</span>
+        </Link>
+        <Link
+          href="/dashboard/documents"
+          className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4 transition-colors hover:border-slate-700"
+        >
+          <span className="flex items-center gap-3">
+            <FileText className="h-4 w-4 text-cyan-400" />
+            <span className="text-sm text-slate-300">Docs awaiting extraction</span>
+          </span>
+          <span className="text-lg font-bold text-white">{pendingExtraction}</span>
+        </Link>
+        <Link
+          href="/dashboard/maintenance"
+          className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4 transition-colors hover:border-slate-700"
+        >
+          <span className="flex items-center gap-3">
+            <Wrench className="h-4 w-4 text-amber-400" />
+            <span className="text-sm text-slate-300">Compliance expiring ≤30d</span>
+          </span>
+          <span className="text-lg font-bold text-white">{complianceExpiring}</span>
+        </Link>
+      </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Recent loads</h2>
+          <Link href="/dashboard/trips" className="text-sm font-medium text-cyan-400 hover:underline">
+            View all
+          </Link>
+        </div>
+
+        {recentLoads.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center">
+            <p className="font-semibold text-slate-300">No loads yet</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload a rate confirmation in the{" "}
+              <Link href="/dashboard/documents" className="text-cyan-400 hover:underline">
+                Document Inbox
+              </Link>{" "}
+              to create your first load.
+            </p>
           </div>
+        ) : (
+          <DataTable head={["Load #", "Broker", "Truck", "Driver", "Pickup", "Rate", "Status"]}>
+            {recentLoads.map((load) => (
+              <TableRow key={load.id}>
+                <td className="px-4 py-3 font-medium text-white">{load.loadNumber}</td>
+                <Cell>{load.broker?.companyName ?? "—"}</Cell>
+                <Cell>{load.truck?.truckNumber ?? "—"}</Cell>
+                <Cell>{load.driver?.fullName ?? "—"}</Cell>
+                <Cell>{formatDate(load.pickupDate)}</Cell>
+                <Cell>{formatMoney(load.rateAmount.toNumber())}</Cell>
+                <td className="px-4 py-3">
+                  <StatusPill value={load.status} />
+                </td>
+              </TableRow>
+            ))}
+          </DataTable>
+        )}
+      </section>
 
-          <nav className="space-y-2">
-            <Link
-              href="/dashboard"
-              className="block rounded-xl bg-cyan-500/10 px-4 py-3 text-cyan-400"
-            >
-              Dashboard
-            </Link>
-
-            <Link
-              href="/dashboard/trucks"
-              className="block rounded-xl px-4 py-3 text-slate-300 hover:bg-slate-800"
-            >
-              🚛 Trucks
-            </Link>
-
-            <Link
-              href="/dashboard/drivers"
-              className="block rounded-xl px-4 py-3 text-slate-300 hover:bg-slate-800"
-            >
-              👤 Drivers
-            </Link>
-
-            <Link
-              href="/dashboard/trips"
-              className="block rounded-xl px-4 py-3 text-slate-300 hover:bg-slate-800"
-            >
-              🛣 Trips
-            </Link>
-
-            <Link
-              href="/dashboard/maintenance"
-              className="block rounded-xl px-4 py-3 text-slate-300 hover:bg-slate-800"
-            >
-              🔧 Maintenance
-            </Link>
-
-            <Link
-              href="/dashboard/alerts"
-              className="block rounded-xl px-4 py-3 text-slate-300 hover:bg-slate-800"
-            >
-              ⚠ Alerts
-            </Link>
-          </nav>
-        </aside>
-
-        <section className="flex-1 p-6 lg:p-10">
-          <div className="mx-auto max-w-7xl">
-
-            <header className="mb-10">
-              <div className="text-sm font-semibold text-cyan-400">
-                TRUCKOPS AI
-              </div>
-
-              <h1 className="mt-2 text-4xl font-black tracking-tight">
-                Fleet Command Center
-              </h1>
-
-              <p className="mt-2 text-slate-400">
-                Welcome back{user.email ? `, ${user.email}` : ""}.
-                Your fleet intelligence center is online.
+      <section className="rounded-lg border border-slate-800 bg-slate-900 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Ship className="h-5 w-5 text-cyan-400" />
+            <div>
+              <h2 className="text-lg font-semibold text-white">Shipping operations</h2>
+              <p className="text-sm text-slate-400">
+                {shipping.bookings} booking{shipping.bookings === 1 ? "" : "s"} ·{" "}
+                {shipping.vessels} vessel{shipping.vessels === 1 ? "" : "s"} ·{" "}
+                {shipping.containers} container{shipping.containers === 1 ? "" : "s"}
               </p>
-            </header>
-
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-
-              <StatCard
-                title="Total Trucks"
-                value={truckCount}
-                icon="🚛"
-              />
-
-              <StatCard
-                title="Active Trucks"
-                value={activeTruckCount}
-                icon="🟢"
-              />
-
-              <StatCard
-                title="Drivers"
-                value={driverCount}
-                icon="👤"
-              />
-
-              <StatCard
-                title="Active Trips"
-                value={activeTripCount}
-                icon="🛣"
-              />
-
-              <StatCard
-                title="Open Alerts"
-                value={openAlertCount}
-                icon="⚠"
-              />
-
-              <StatCard
-                title="Maintenance"
-                value={maintenanceCount}
-                icon="🔧"
-              />
-
             </div>
-
-            <div className="mt-10 grid gap-6 xl:grid-cols-3">
-
-              <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 xl:col-span-2">
-                <div className="mb-6 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl font-bold">
-                      Recent Trips
-                    </h2>
-                    <p className="text-sm text-slate-400">
-                      Latest fleet activity
-                    </p>
-                  </div>
-
-                  <Link
-                    href="/dashboard/trips"
-                    className="text-sm font-semibold text-cyan-400"
-                  >
-                    View all →
-                  </Link>
-                </div>
-
-                {recentTrips.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-700 p-10 text-center">
-                    <div className="text-4xl">🛣</div>
-                    <p className="mt-3 font-semibold">
-                      No trips yet
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Create your first trip from the Trips module.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {recentTrips.map((trip) => (
-                      <div
-                        key={trip.id}
-                        className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4 md:flex-row md:items-center md:justify-between"
-                      >
-                        <div>
-                          <div className="font-semibold">
-                            {trip.shipperName} → {trip.consigneeName}
-                          </div>
-
-                          <div className="mt-1 text-sm text-slate-500">
-                            {trip.truck?.licensePlate}
-                            {trip.driver
-                              ? ` · ${trip.driver.fullName}`
-                              : ""}
-                          </div>
-                        </div>
-
-                        <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-400">
-                          {trip.status}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 to-slate-900 p-6">
-                <div className="text-3xl">🤖</div>
-
-                <h2 className="mt-4 text-xl font-bold">
-                  TruckOps AI
-                </h2>
-
-                <p className="mt-2 text-sm leading-6 text-slate-400">
-                  Your operations intelligence layer will analyze
-                  fleet utilization, maintenance risk, trip costs,
-                  driver performance and operational alerts.
-                </p>
-
-                <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                  <div className="text-xs uppercase tracking-wider text-slate-500">
-                    AI Status
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                    <span className="text-sm font-semibold">
-                      Operations layer online
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-            </div>
-
           </div>
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: number;
-  icon: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 transition hover:border-cyan-500/30">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-slate-400">
-          {title}
-        </span>
-
-        <span className="text-2xl">
-          {icon}
-        </span>
-      </div>
-
-      <div className="mt-4 text-4xl font-black">
-        {value}
-      </div>
+          <Link
+            href="/dashboard/shipping"
+            className="inline-flex items-center gap-1 text-sm font-medium text-cyan-400 hover:underline"
+          >
+            Shipping Command <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,103 +1,80 @@
-import Link from "next/link";
-import { requirePageUser } from "@/auth";
+import type { Metadata } from "next";
+import { Truck, Wrench } from "lucide-react";
+import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { AddTruckModal } from "@/components/AddTruckModal";
+import {
+  DataTable,
+  TableRow,
+  Cell,
+  PageHeader,
+  EmptyState,
+  StatCard,
+  StatusPill,
+} from "@/components/ui/dashboard";
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Trucks | TruckOps AI" };
 
 export default async function TrucksPage() {
   const user = await requirePageUser();
 
-  const trucks = await prisma.truck.findMany({
-    where: {
-      userId: user.id,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const [trucks, active, inMaintenance] = await Promise.all([
+    prisma.truck.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: { drivers: { select: { id: true, fullName: true } }, _count: { select: { loads: true } } },
+    }),
+    prisma.truck.count({ where: { userId: user.id, status: "active" } }),
+    prisma.truck.count({ where: { userId: user.id, status: "maintenance" } }),
+  ]);
 
   return (
-    <main className="min-h-screen bg-slate-950 p-6 text-white lg:p-10">
-      <div className="mx-auto max-w-7xl">
+    <div className="space-y-6 p-6 pt-8 lg:p-8">
+      <PageHeader
+        title="Trucks"
+        subtitle={`${trucks.length} truck${trucks.length === 1 ? "" : "s"} in your fleet`}
+        action={<AddTruckModal />}
+      />
 
-        <div className="mb-8">
-          <Link
-            href="/dashboard"
-            className="text-sm text-cyan-400"
-          >
-            ← Dashboard
-          </Link>
-
-          <div className="mt-5 flex items-center justify-between">
-            <div>
-              <h1 className="text-4xl font-black">
-                Fleet
-              </h1>
-
-              <p className="mt-2 text-slate-400">
-                Manage every truck in your operation.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {trucks.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900 p-12 text-center">
-            <div className="text-5xl">🚛</div>
-            <h2 className="mt-4 text-xl font-bold">
-              Your fleet is empty
-            </h2>
-            <p className="mt-2 text-slate-500">
-              Trucks added through the API will appear here.
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {trucks.map((truck) => (
-              <div
-                key={truck.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900 p-6"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="text-3xl">🚛</div>
-
-                  <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs text-cyan-400">
-                    {truck.status}
-                  </span>
-                </div>
-
-                <h2 className="mt-5 text-xl font-bold">
-                  {truck.licensePlate}
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-400">
-                  {truck.make || "Unknown manufacturer"}{" "}
-                  {truck.model || ""}
-                </p>
-
-                <div className="mt-6 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <div className="text-slate-500">
-                      Mileage
-                    </div>
-                    <div className="mt-1 font-semibold">
-                      {((truck as any)?.mileage ?? 0).toLocaleString()} km
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <div className="text-slate-500">
-                      Fuel
-                    </div>
-                    <div className="mt-1 font-semibold">
-                      {((truck as any)?.fuelLevel ?? 0)}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Total trucks" value={trucks.length} icon={<Truck className="h-4 w-4 text-sky-400" />} />
+        <StatCard label="Active" value={active} />
+        <StatCard
+          label="In maintenance"
+          value={inMaintenance}
+          icon={<Wrench className="h-4 w-4 text-amber-400" />}
+        />
       </div>
-    </main>
+
+      {trucks.length === 0 ? (
+        <EmptyState
+          title="No trucks registered yet"
+          body="Add your first truck to start assigning loads and tracking IFTA mileage."
+        />
+      ) : (
+        <DataTable head={["Truck #", "Vehicle", "Year", "Plate", "Drivers", "Loads", "Status"]}>
+          {trucks.map((truck) => (
+            <TableRow key={truck.id}>
+              <td className="px-4 py-3 font-medium text-white">{truck.truckNumber}</td>
+              <Cell>
+                {[truck.make, truck.model].filter(Boolean).join(" ") || "—"}
+              </Cell>
+              <Cell>{truck.year ?? "—"}</Cell>
+              <Cell>{truck.licensePlate ?? "—"}</Cell>
+              <Cell>
+                {truck.drivers.length > 0
+                  ? truck.drivers.map((d) => d.fullName).join(", ")
+                  : "—"}
+              </Cell>
+              <Cell>{truck._count.loads}</Cell>
+              <td className="px-4 py-3">
+                <StatusPill value={truck.status} />
+              </td>
+            </TableRow>
+          ))}
+        </DataTable>
+      )}
+    </div>
   );
 }

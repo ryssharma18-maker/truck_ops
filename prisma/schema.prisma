@@ -35,6 +35,15 @@ model User {
   subscriptions       Subscription[]
   trucks              Truck[]
 
+  // Shipping vertical
+  shippingVessels    ShippingVessel[]
+  shippingPorts      ShippingPort[]
+  shippingBookings   ShippingBooking[]
+  shippingContainers ShippingContainer[]
+  shippingManifests  ShippingManifest[]
+  shippingDocuments  ShippingDocument[]
+  shippingInvoices   ShippingInvoice[]
+
   @@map("users")
 }
 
@@ -119,6 +128,7 @@ model Load {
   fuelSurcharge      Decimal           @default(0) @map("fuel_surcharge") @db.Decimal(10, 2)
   detentionAmount    Decimal           @default(0) @map("detention_amount") @db.Decimal(10, 2)
   lumperAmount       Decimal           @default(0) @map("lumper_amount") @db.Decimal(10, 2)
+  // Generated column — maintained by Postgres, never written by the app.
   totalInvoiceAmount Decimal           @default(0) @map("total_invoice_amount") @db.Decimal(10, 2)
   status             LoadStatus        @default(pending)
   notes              String?
@@ -402,4 +412,217 @@ enum SubscriptionStatus {
   canceled
   past_due
   trialing
+}
+
+// ===================== SHIPPING VERTICAL =====================
+enum ShippingVesselStatus {
+  active
+  in_port
+  at_sea
+  maintenance
+}
+
+enum ShippingBookingStatus {
+  pending
+  confirmed
+  loaded
+  in_transit
+  arrived
+  delivered
+  cancelled
+}
+
+enum ShippingContainerSize {
+  ft20
+  ft40
+  ft40hc
+  ft45
+}
+
+enum ShippingContainerType {
+  dry
+  reefer
+  open_top
+  flat_rack
+  tank
+}
+
+model ShippingVessel {
+  id             String               @id @default(uuid())
+  userId         String               @map("user_id") @db.Uuid
+  imoNumber      String
+  name           String
+  flag           String?
+  vesselType     String?
+  capacityTeu    Int?
+  deadweightTons Int?
+  status         ShippingVesselStatus @default(active)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings       ShippingBooking[]
+
+  @@unique([userId, imoNumber])
+  @@index([userId])
+  @@map("shipping_vessels")
+}
+
+model ShippingPort {
+  id                String            @id @default(uuid())
+  userId            String            @map("user_id") @db.Uuid
+  unlocode          String
+  name              String
+  country           String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loadingBookings   ShippingBooking[] @relation("PortOfLoading")
+  dischargeBookings ShippingBooking[] @relation("PortOfDischarge")
+
+  @@unique([userId, unlocode])
+  @@index([userId])
+  @@map("shipping_ports")
+}
+
+model ShippingBooking {
+  id                String                @id @default(uuid())
+  userId            String                @map("user_id") @db.Uuid
+  bookingNumber     String
+  shipperName       String
+  consigneeName     String
+  vesselId          String?
+  portOfLoadingId   String?
+  portOfDischargeId String?
+  etd               DateTime?
+  eta               DateTime?
+  status            ShippingBookingStatus @default(pending)
+  freightTerms      String?
+  commodity         String?
+  notes             String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vessel            ShippingVessel?       @relation(fields: [vesselId], references: [id], onDelete: SetNull)
+  portOfLoading     ShippingPort?         @relation("PortOfLoading", fields: [portOfLoadingId], references: [id], onDelete: SetNull)
+  portOfDischarge   ShippingPort?         @relation("PortOfDischarge", fields: [portOfDischargeId], references: [id], onDelete: SetNull)
+  containers        ShippingContainer[]
+  manifests         ShippingManifest[]
+  documents         ShippingDocument[]
+  invoices          ShippingInvoice[]
+
+  @@unique([userId, bookingNumber])
+  @@index([userId])
+  @@map("shipping_bookings")
+}
+
+model ShippingContainer {
+  id              String                @id @default(uuid())
+  userId          String                @map("user_id") @db.Uuid
+  bookingId       String?
+  containerNumber String
+  size            ShippingContainerSize @default(ft40)
+  type            ShippingContainerType @default(dry)
+  sealNumber      String?
+  weightKg        Decimal?              @db.Decimal(12, 2)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking         ShippingBooking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([bookingId])
+  @@map("shipping_containers")
+}
+
+model ShippingManifest {
+  id             String                 @id @default(uuid())
+  userId         String                 @map("user_id") @db.Uuid
+  bookingId      String
+  manifestNumber String
+  status         ShippingManifestStatus @default(draft)
+  notes          String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking        ShippingBooking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, manifestNumber])
+  @@index([userId])
+  @@map("shipping_manifests")
+}
+
+enum ShippingManifestStatus {
+  draft
+  submitted
+  approved
+  rejected
+}
+
+enum ShippingDocumentType {
+  bill_of_lading
+  commercial_invoice
+  packing_list
+  certificate_of_origin
+  customs_declaration
+  other
+}
+
+enum ShippingExtractionStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum ShippingInvoiceStatus {
+  draft
+  sent
+  paid
+  overdue
+  cancelled
+}
+
+model ShippingDocument {
+  id               String                   @id @default(uuid())
+  userId           String                   @map("user_id") @db.Uuid
+  bookingId        String?
+  documentType     ShippingDocumentType
+  fileName         String
+  fileUrl          String?
+  source           String                   @default("manual_upload")
+  emailFrom        String?
+  extractionStatus ShippingExtractionStatus @default(pending)
+  extractedData    Json?
+  confidence       Float?
+  expiresAt        DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking          ShippingBooking?         @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([bookingId])
+  @@map("shipping_documents")
+}
+
+model ShippingInvoice {
+  id            String                @id @default(uuid())
+  userId        String                @map("user_id") @db.Uuid
+  bookingId     String?
+  invoiceNumber String
+  amount        Decimal               @db.Decimal(14, 2)
+  currency      String                @default("USD")
+  status        ShippingInvoiceStatus @default(draft)
+  issueDate     DateTime?
+  dueDate       DateTime?
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking       ShippingBooking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, invoiceNumber])
+  @@index([userId])
+  @@map("shipping_invoices")
 }

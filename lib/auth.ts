@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import type { User } from "@prisma/client";
+import { HttpError } from "@/lib/errors";
+
+export { HttpError };
 
 // ─── Error class ─────────────────────────────────────────────────────────────
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public code?: string,
-  ) {
-    super(message);
+/** Historical name for {@link HttpError}, kept so existing imports keep working. */
+export class ApiError extends HttpError {
+  constructor(status: number, message: string, code?: string) {
+    super(status, message, code);
     this.name = "ApiError";
   }
 }
@@ -17,17 +17,43 @@ export class ApiError extends Error {
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 /**
+ * Demo mode is for local development and sales demos only, where there is no
+ * Supabase project to sign in against.
+ *
+ * It is hard-disabled in production. Without that guard, a deploy that is
+ * missing `NEXT_PUBLIC_SUPABASE_URL` would silently accept every request as a
+ * synthetic user — an authentication bypass that looks like a working app.
+ */
+function demoModeEnabled(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
+      throw new ApiError(
+        500,
+        "NEXT_PUBLIC_DEMO_MODE must not be enabled in production",
+        "demo_mode_in_production",
+      );
+    }
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      throw new ApiError(
+        500,
+        "NEXT_PUBLIC_SUPABASE_URL is not configured",
+        "auth_not_configured",
+      );
+    }
+    return false;
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  return !url || url.includes("placeholder") || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+}
+
+/**
  * Verifies the caller's Supabase session and returns their public.users row.
- * In demo mode (no real Supabase credentials) returns a synthetic demo user
- * so API routes can operate without a live database.
+ * In demo mode (local development only) returns a synthetic demo user so API
+ * routes can operate without a live database.
  */
 export async function requireUser(): Promise<User> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const isDemo =
-    !url || url.includes("placeholder") || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-
-  if (isDemo) {
-    // Return a synthetic demo user that satisfies the Prisma User type shape.
+  if (demoModeEnabled()) {
     return demoUser();
   }
 
@@ -81,7 +107,7 @@ export function withErrorHandling<T>(
 // ─── Response helpers ─────────────────────────────────────────────────────────
 
 export function errorResponse(err: unknown): NextResponse {
-  if (err instanceof ApiError) {
+  if (err instanceof HttpError) {
     return NextResponse.json(
       { error: err.message, code: err.code ?? null },
       { status: err.status },

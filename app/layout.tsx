@@ -1,9 +1,9 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TruckOps AI",
-  description: "AI Back-Office for Trucking Fleets",
+  title: "TruckOps AI | Fleet & Shipping Logistics OS",
+  description: "AI Back-Office for Trucking Fleets and Maritime Shipping Operations.",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-gray-50 text-gray-900">{children}</body>
+      <body className="bg-slate-950 text-slate-50">{children}</body>
     </html>
   );
 }

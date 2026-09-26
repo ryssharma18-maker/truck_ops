@@ -59,6 +59,17 @@ function daysFromNow(days: number, hour = 9): Date {
 
 const dec = (n: number) => new Prisma.Decimal(n.toFixed(2));
 
+/**
+ * Locates the demo account in Supabase Auth, creating or repairing it as
+ * needed, and returns its real auth UUID.
+ *
+ * The presence of a `public.users` row is NOT proof that an auth user exists.
+ * An earlier version trusted that row and returned early, which let a
+ * fabricated row with a hand-written UUID stand in for a real login: the seed
+ * reported success while no password grant could ever succeed. Always ask the
+ * Admin API, and treat a `public.users` row whose id has no auth counterpart as
+ * a hard error.
+ */
 async function ensureDemoAuthUser(): Promise<string> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -70,42 +81,108 @@ async function ensureDemoAuthUser(): Promise<string> {
     );
   }
 
+  if (serviceKey.startsWith("placeholder") || serviceKey.startsWith("sb_publishable")) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is still a placeholder. The demo account " +
+        "cannot be provisioned without the real service_role key: " +
+        "Supabase dashboard -> Project Settings -> API -> service_role key " +
+        "(Reveal).",
+    );
+  }
+
   const admin = createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const existing = await prisma.user.findUnique({ where: { email: DEMO_EMAIL } });
-  if (existing) {
-    console.log(`  [ok] demo auth user already exists (${existing.id})`);
-    return existing.id;
-  }
-
-  const { data, error } = await admin.auth.admin.createUser({
-    email: DEMO_EMAIL,
-    password: DEMO_PASSWORD,
-    email_confirm: true, // skip the confirmation email for the demo account
-    user_metadata: {
-      full_name: "Demo Owner",
-      company_name: "Rolling Pines Transport LLC",
-      phone: "+1-555-0142",
-      truck_count: 3,
-    },
+  // 1. Does the auth user exist? Search by email rather than trusting
+  //    public.users, which the trigger can populate for deleted auth users.
+  const { data: found, error: findError } = await admin.auth.admin.listUsers({
+    page: 1,
+    perPage: 1000,
   });
 
-  if (error || !data.user) {
-    throw new Error(`Could not create demo auth user: ${error?.message}`);
+  if (findError) {
+    throw new Error(
+      `Supabase Admin API rejected SUPABASE_SERVICE_ROLE_KEY: ${findError.message}`,
+    );
   }
 
-  // Give the trigger a moment to insert public.users.
-  for (let i = 0; i < 10; i++) {
-    const row = await prisma.user.findUnique({ where: { id: data.user.id } });
-    if (row) return row.id;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-
-  throw new Error(
-    "public.users row was never created - is the on_auth_user_created trigger installed? Run supabase/rls-policies.sql.",
+  const authUser = found.users.find(
+    (u) => u.email?.toLowerCase() === DEMO_EMAIL,
   );
+
+  let authUserId: string;
+
+  if (authUser) {
+    // 2. Force the known password. A row that exists in public.users but whose
+    //    auth record is gone leaves the seed unable to log in.
+    const { error: updateError } = await admin.auth.admin.updateUserById(
+      authUser.id,
+      { password: DEMO_PASSWORD, email_confirm: true },
+    );
+    if (updateError) {
+      throw new Error(
+        `Could not reset the demo password: ${updateError.message}`,
+      );
+    }
+    authUserId = authUser.id;
+    console.log(`  [ok] demo auth user exists (${authUserId}), password reset`);
+  } else {
+    // 3. No auth user: create one. A pre-existing public.users row with a
+    //    different id is an orphan and will confuse the trigger, so clear it.
+    const orphan = await prisma.user.findUnique({
+      where: { email: DEMO_EMAIL },
+    });
+    if (orphan) {
+      console.log(
+        `  [fix] removing orphaned public.users row ${orphan.id} (no auth user)`,
+      );
+      await wipeDemoData(orphan.id);
+      await prisma.user.delete({ where: { id: orphan.id } });
+    }
+
+    const { data, error } = await admin.auth.admin.createUser({
+      email: DEMO_EMAIL,
+      password: DEMO_PASSWORD,
+      email_confirm: true, // skip the confirmation email for the demo account
+      user_metadata: {
+        full_name: "Marcus Vance",
+        company_name: "Rolling Pines Transport LLC",
+        phone: "+1-555-0142",
+        truck_count: 3,
+      },
+    });
+
+    if (error || !data.user) {
+      throw new Error(`Could not create demo auth user: ${error?.message}`);
+    }
+    authUserId = data.user.id;
+    console.log(`  [ok] created demo auth user (${authUserId})`);
+  }
+
+  // 4. Confirm the public.users row matches the auth id, provisioning it
+  //    directly if the SQL trigger was never installed.
+  const row = await prisma.user.findUnique({ where: { id: authUserId } });
+  if (row) return row.id;
+
+  await prisma.user.create({
+    data: {
+      id: authUserId,
+      email: DEMO_EMAIL,
+      fullName: "Marcus Vance",
+      companyName: "Rolling Pines Transport LLC",
+      phone: "+1-555-0142",
+      subscriptionPlan: "trial",
+      truckCount: 3,
+      inboxEmail: `fleet-rollingpines@${process.env.INBOUND_EMAIL_DOMAIN ?? "inbox.truckops.ai"}`,
+    },
+  });
+  console.log(
+    "  [fix] inserted public.users row directly - run supabase/rls-policies.sql " +
+      "to install the on_auth_user_created trigger for future signups",
+  );
+
+  return authUserId;
 }
 
 async function wipeDemoData(userId: string) {

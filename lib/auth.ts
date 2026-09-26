@@ -17,44 +17,32 @@ export class ApiError extends HttpError {
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Demo mode is for local development and sales demos only, where there is no
- * Supabase project to sign in against.
+ * Authentication is always real: a Supabase session backed by a `public.users`
+ * row. There is no synthetic-user path.
  *
- * It is hard-disabled in production. Without that guard, a deploy that is
- * missing `NEXT_PUBLIC_SUPABASE_URL` would silently accept every request as a
- * synthetic user — an authentication bypass that looks like a working app.
+ * If Supabase is not configured we fail closed with a 500 rather than
+ * inventing a user. Silently accepting every request as a demo account looks
+ * exactly like a working app and is an authentication bypass, so a missing
+ * variable has to be loud.
  */
-function demoModeEnabled(): boolean {
-  if (process.env.NODE_ENV === "production") {
-    if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
-      throw new ApiError(
-        500,
-        "NEXT_PUBLIC_DEMO_MODE must not be enabled in production",
-        "demo_mode_in_production",
-      );
-    }
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      throw new ApiError(
-        500,
-        "NEXT_PUBLIC_SUPABASE_URL is not configured",
-        "auth_not_configured",
-      );
-    }
-    return false;
-  }
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  return !url || url.includes("placeholder") || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+function supabaseConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  );
 }
 
 /**
  * Verifies the caller's Supabase session and returns their public.users row.
- * In demo mode (local development only) returns a synthetic demo user so API
- * routes can operate without a live database.
  */
 export async function requireUser(): Promise<User> {
-  if (demoModeEnabled()) {
-    return demoUser();
+  if (!supabaseConfigured()) {
+    throw new ApiError(
+      500,
+      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and " +
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      "auth_not_configured",
+    );
   }
 
   try {
@@ -163,27 +151,7 @@ export function serialize<T>(value: T): T {
   );
 }
 
-// ─── Demo user ────────────────────────────────────────────────────────────────
-
-function demoUser(): User {
-  return {
-    id: "d0000000-0000-0000-0000-000000000001",
-    email: "demo@truckops.ai",
-    fullName: "Marcus Vance",
-    companyName: "Rolling Pines Transport LLC",
-    phone: "+1 (555) 014-2889",
-    dotNumber: "3842119",
-    mcNumber: "MC-998231",
-    stripeCustomerId: null,
-    subscriptionPlan: "trial",
-    truckCount: 3,
-    inboxEmail: "fleet-rollingpines@inbox.truckops.ai",
-    createdAt: new Date("2026-01-01"),
-    updatedAt: new Date(),
-  } as User;
-}
-
-
+// ─── Page helper ──────────────────────────────────────────────────────────────
 
 /** For server components/pages: redirect to /login instead of throwing a 500 when logged out. */
 export async function requirePageUser(): Promise<User> {

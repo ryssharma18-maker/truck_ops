@@ -83,12 +83,20 @@ Prisma connects as the database owner, which **bypasses RLS**. The query
 adding a model with a `user_id` column, add it to sections 3 and 4 of that
 file; the verification queries in section 6 will surface any you forget.
 
-## Demo mode
+## Authentication is always real
 
-`NEXT_PUBLIC_DEMO_MODE=true` (or a placeholder Supabase URL) makes
-`requireUser()` return a synthetic user so the app runs without a live
-database. It is **hard-refused when `NODE_ENV=production`** — see
-`demoModeEnabled()` in `lib/auth.ts`. Never weaken that guard.
+There is no demo mode and no synthetic user. `requireUser()` verifies a
+Supabase session and loads the matching `public.users` row.
+
+- A missing `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` must
+  fail closed. Both `lib/auth.ts` and `middleware.ts` return 500
+  (`auth_not_configured`) rather than letting the request through.
+- Do not add a bypass for local development. The database is reachable from a
+  dev machine; seed it instead (`npm run db:seed`) and sign in as
+  `demo@truckops.ai`.
+- `middleware.ts` is only a first gate. It cannot know the tenant, and Prisma
+  bypasses RLS, so it is never the thing standing between a request and
+  another carrier's data.
 
 ## Money
 

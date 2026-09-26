@@ -25,34 +25,34 @@ const isPublic = (pathname: string) =>
   PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
   PUBLIC_API.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
-function isDemoMode(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  return (
-    !url ||
-    url.includes("placeholder") ||
-    process.env.NEXT_PUBLIC_DEMO_MODE === "true"
-  );
-}
-
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-
-  // Demo/local mode has no real Supabase project, so there is no session to
-  // check. Server-side `requireUser()` still gates data access.
-  if (isDemoMode()) {
-    return NextResponse.next();
-  }
 
   if (isPublic(pathname)) {
     return NextResponse.next();
   }
 
+  // Fail closed when Supabase is not configured. Returning `next()` here would
+  // let every request past this gate; requireUser() would still reject them, so
+  // this only decides whether the failure surfaces as a redirect or a 500.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          error: "Supabase is not configured",
+          code: "auth_not_configured",
+        },
+        { status: 500 },
+      );
+    }
+    return new NextResponse("Supabase is not configured", { status: 500 });
+  }
+
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
         get(name: string) {
           return request.cookies.get(name)?.value;
@@ -70,7 +70,6 @@ export async function middleware(request: NextRequest) {
       },
     },
   );
-
   // Do not skip this: getUser() revalidates the JWT with Supabase Auth and is
   // what triggers the cookie refresh in the `set` callbacks above.
   const {

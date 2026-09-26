@@ -47,8 +47,27 @@ loadEnvLocalFallback();
 
 const prisma = new PrismaClient();
 
-const DEMO_EMAIL = "demo@truckops.ai";
-const DEMO_PASSWORD = "demo1234";
+/**
+ * Which account the demo data belongs to.
+ *
+ * Defaults to the shared demo login. Set SEED_EMAIL to seed an existing
+ * account instead, which is the only option without a service_role key since
+ * creating an auth user needs the Admin API.
+ */
+const DEMO_EMAIL = process.env.SEED_EMAIL ?? "demo@truckops.ai";
+const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "demo1234";
+
+/**
+ * The Admin API is only reachable with the real service_role key. A placeholder
+ * or publishable key fails with "Invalid API key", so detect it up front rather
+ * than reporting a confusing auth error later.
+ */
+function serviceKeyUsable(): boolean {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return Boolean(
+    key && !key.startsWith("placeholder") && !key.startsWith("sb_publishable"),
+  );
+}
 
 function daysFromNow(days: number, hour = 9): Date {
   const d = new Date();
@@ -60,37 +79,59 @@ function daysFromNow(days: number, hour = 9): Date {
 const dec = (n: number) => new Prisma.Decimal(n.toFixed(2));
 
 /**
- * Locates the demo account in Supabase Auth, creating or repairing it as
- * needed, and returns its real auth UUID.
+ * Resolves the account the demo data belongs to and returns its auth UUID.
  *
- * The presence of a `public.users` row is NOT proof that an auth user exists.
- * An earlier version trusted that row and returned early, which let a
- * fabricated row with a hand-written UUID stand in for a real login: the seed
- * reported success while no password grant could ever succeed. Always ask the
- * Admin API, and treat a `public.users` row whose id has no auth counterpart as
- * a hard error.
+ * Two paths:
+ *
+ *  1. A `public.users` row already exists for SEED_EMAIL and no usable
+ *     service_role key is configured. This is the normal case when seeding an
+ *     existing account, and it needs no Admin API.
+ *
+ *  2. The account has to be created or its password reset. That needs the
+ *     service_role key, and it is the only reason the key is required at all.
+ *
+ * A `public.users` row is not by itself proof that an auth user exists: an
+ * earlier version trusted it and returned early, which let a fabricated row
+ * with a hand-written UUID stand in for a real login, so the seed reported
+ * success while no password grant could ever succeed. Whenever a real key is
+ * available we verify through the Admin API and treat an unbacked row as a
+ * hard error.
  */
 async function ensureDemoAuthUser(): Promise<string> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !serviceKey) {
+  if (!url) {
     throw new Error(
-      "Seed needs NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in " +
-        ".env or .env.local",
+      "Seed needs NEXT_PUBLIC_SUPABASE_URL in .env or .env.local",
     );
   }
 
-  if (serviceKey.startsWith("placeholder") || serviceKey.startsWith("sb_publishable")) {
-    throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY is still a placeholder. The demo account " +
-        "cannot be provisioned without the real service_role key: " +
-        "Supabase dashboard -> Project Settings -> API -> service_role key " +
-        "(Reveal).",
+  const keyUsable = serviceKeyUsable();
+
+  if (!keyUsable) {
+    // No Admin API. Fall back to an existing profile, but say plainly that we
+    // cannot verify the login works.
+    const existing = await prisma.user.findUnique({
+      where: { email: DEMO_EMAIL },
+    });
+    if (!existing) {
+      throw new Error(
+        `No public.users row for ${DEMO_EMAIL} and no usable ` +
+          "SUPABASE_SERVICE_ROLE_KEY to create the login. Either set " +
+          "SEED_EMAIL to an account that already exists, or add the real " +
+          "service_role key from Supabase -> Project Settings -> API.",
+      );
+    }
+    console.log(
+      `  [warn] no service_role key, so the auth login for ${DEMO_EMAIL} ` +
+        `cannot be created or verified. Seeding the existing profile ${existing.id}.`,
     );
+    return existing.id;
   }
 
-  const admin = createClient(url, serviceKey, {
+  // serviceKeyUsable() already proved this is present and well-formed.
+  const admin = createClient(url, serviceKey!, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
@@ -1143,9 +1184,13 @@ async function main() {
     ],
   });
 
+  const passwordNote = !serviceKeyUsable()
+      ? `    Account: ${DEMO_EMAIL} (existing login, password unchanged)`
+      : `    Login:  ${DEMO_EMAIL} / ${DEMO_PASSWORD}`;
+
   console.log(`
   Done.
-    Login:  ${DEMO_EMAIL} / ${DEMO_PASSWORD}
+${passwordNote}
 
     Trucking
       Trucks:    ${trucking.trucks.length}

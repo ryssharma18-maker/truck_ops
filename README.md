@@ -56,11 +56,24 @@ npm run db:seed
 npm run dev
 ```
 
-Log in as `demo@truckops.ai` / `demo1234`.
+The seed defaults to creating and seeding `demo@truckops.ai` / `demo1234`,
+which needs the real `service_role` key because it creates a Supabase login.
+To seed an account that already exists instead — no service_role key needed —
+set `SEED_EMAIL`:
+
+```bash
+SEED_EMAIL="you@example.com" npm run db:seed
+```
+
+The seed wipes and rebuilds only that account's rows. A JSON backup of the
+previous state is written to the temp directory before a destructive change, and
+`node scripts/reassign-demo-data.cjs <email>` moves an existing dataset between
+accounts.
 
 > On Windows, stop the dev server before `npm run build` — the dev server
 > holds a lock on the Prisma query engine DLL and `prisma generate` fails with
-> `EPERM`. See `AGENTS.md`.
+> `EPERM`. See `AGENTS.md`. If the repo lives under OneDrive, also keep
+> `.next` on local disk or the build fails with `EINVAL ... readlink`.
 
 ### Supabase dashboard settings
 

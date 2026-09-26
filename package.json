@@ -12,6 +12,8 @@
     "verify:secrets": "node scripts/scan-secrets.js",
     "verify:email": "tsx scripts/verify-email-parser.ts",
     "verify:webhook": "tsx scripts/verify-webhook-auth.ts",
+    "verify:stripe": "tsx scripts/verify-stripe.ts",
+    "verify:stripe:webhook": "node scripts/verify-stripe-webhook.cjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

@@ -105,3 +105,6 @@ jobs:
 
       - name: Webhook signature checks
         run: npm run verify:webhook
+
+      - name: Stripe signature checks
+        run: npm run verify:stripe

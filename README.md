@@ -120,11 +120,61 @@ Inbound email works end to end but has not been run against a live provider.
 or a JSON envelope, and returns 503 until a webhook secret is set — it fails
 closed and will not accept unsigned mail.
 
+## Billing
+
+Checkout runs through Stripe Checkout and post-payment changes arrive via
+webhook. There is no `stripe` npm package: two API calls and one signature
+check did not justify the dependency, and the signature verification is
+implemented explicitly in `lib/services/stripeService.ts` and covered by
+`npm run verify:stripe` instead of being trusted to a library.
+
+Setup:
+
+1. Create three **recurring** prices in Stripe (Lite 15000, Pro 29900,
+   Enterprise 49900, USD, per truck per month) and set `STRIPE_PRICE_LITE`,
+   `STRIPE_PRICE_PRO` and `STRIPE_PRICE_ENTERPRISE`. Price IDs are read from the
+   environment, never hardcoded, because test-mode and live-mode prices are
+   different objects.
+2. Set `STRIPE_SECRET_KEY`.
+3. Forward events and copy the signing secret to `STRIPE_WEBHOOK_SECRET`:
+
+   ```bash
+   stripe listen --forward-to localhost:3000/api/webhooks/stripe
+   ```
+
+Handled events: `checkout.session.completed`,
+`customer.subscription.created|updated|deleted`, and
+`customer.subscription.trial_will_end`.
+
+The webhook fails closed. With no secret it returns 503 and changes nothing,
+because an unsigned `customer.subscription.updated` would otherwise be a way to
+grant yourself a paid plan. The account is resolved from `metadata.userId`,
+which the Checkout session set, never from the event's email address, and only
+after the signature verifies.
+
+Verify the signature logic offline and the route end to end:
+
+```bash
+npm run verify:stripe          # 33 offline checks, no server needed
+npm run verify:stripe:webhook  # needs a dev server and a matching secret
+```
+
 ## Verification status
 
 `npm run typecheck`, `npm run lint`, `npm run build`, `npm run verify:secrets`,
-`npm run verify:email` and `npm run verify:webhook` all pass, and all 21
-dashboard and public pages return 200 against a seeded database.
+`npm run verify:email`, `npm run verify:webhook` and `npm run verify:stripe`
+all pass, and all 21 dashboard and public pages return 200 against a seeded
+database.
+
+Two network notes, both specific to running from a Windows dev box rather than
+the deployed app:
+
+- **Use the connection pooler.** Some ISPs transparently proxy port 5432, which
+  makes `db.<ref>.supabase.co` resolve to a private address and fail with
+  `Can't reach database server`. The pooler is unaffected.
+- **Expect intermittent database drops on the pooler from home.** Requests fail
+  with `Can't reach database server` even when the pooler is configured
+  correctly, and succeed on retry. A Vercel deployment is unaffected.
 
 The RLS script in `supabase/rls-policies.sql` has **not** been executed against
 your Supabase project — the verification queries in its section 6 need to be

@@ -131,7 +131,25 @@ call `router.refresh()`.
 
 - `GEMINI_API_KEY` — exact casing. `aiService` reads only this spelling.
 - `SUPABASE_SERVICE_ROLE_KEY` — server-only, never `NEXT_PUBLIC_`.
+- `lib/env.ts` owns the "is this configured?" question. `isConfigured()`
+  rejects placeholders, so use it rather than `Boolean(process.env.X)`, which
+  reports a leftover `placeholder-service-key` as working. Use
+  `requireEnv()` where a missing value must abort.
 - Inbound webhook secrets must be set, or `POST /api/webhooks/inbound-email`
   returns 503. It fails closed, never open.
 - `.env*` is git-ignored except `.env.example`. `npm run verify:secrets` is
   wired into CI; do not paste a real key into `.env.example`.
+
+## Billing
+
+`lib/services/stripeService.ts` talks to the Stripe REST API directly. Two rules
+matter more than the rest:
+
+- The webhook verifies `Stripe-Signature` over the **raw** request body. Reading
+  the body with `req.json()` and re-serialising changes the bytes and the
+  signature stops matching. Use `await req.text()`.
+- Resolve the account from `metadata.userId`, which the Checkout session set,
+  never from the event's email. And only after the signature verifies.
+
+Plan price IDs come from the environment (`STRIPE_PRICE_*`); test-mode and
+live-mode prices are different objects. Amounts are integer cents.

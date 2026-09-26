@@ -2,50 +2,28 @@ import type { Metadata } from "next";
 import { CheckCircle2, XCircle, KeyRound, Inbox } from "lucide-react";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { integrationStatus } from "@/lib/env";
 import { ProfileForm } from "@/components/ProfileForm";
+import { BillingActions } from "@/components/BillingActions";
 import { PageHeader, StatCard } from "@/components/ui/dashboard";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Settings | TruckOps AI" };
 
 /**
- * Integration status is derived from which server-side env vars are present.
- * Only a boolean "configured / not configured" is ever rendered — never a key.
+ * Integration status is derived from which server-side env vars hold a real
+ * value. `integrationStatus()` rejects placeholders, so a key left as
+ * "placeholder-service-key" shows as not configured instead of pretending to
+ * work. Only a boolean is ever rendered — never a key.
  */
 function IntegrationStatus() {
+  const status = integrationStatus();
   const checks: { name: string; configured: boolean; hint: string }[] = [
-    {
-      name: "Gemini AI extraction",
-      configured: Boolean(process.env.GEMINI_API_KEY),
-      hint: "Rate con, BoL, commercial invoice and packing list parsing",
-    },
-    {
-      name: "Supabase Storage",
-      configured: Boolean(
-        process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
-      ),
-      hint: "Document uploads and signed download URLs",
-    },
-    {
-      name: "Stripe billing",
-      configured: Boolean(
-        process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET,
-      ),
-      hint: "Subscription checkout and webhook-driven plan changes",
-    },
-    {
-      name: "Transactional email",
-      configured: Boolean(process.env.RESEND_API_KEY || process.env.SENDGRID_API_KEY),
-      hint: "Invoice and compliance notifications",
-    },
-    {
-      name: "Inbound email",
-      configured: Boolean(
-        process.env.INBOUND_EMAIL_DOMAIN &&
-          (process.env.SENDGRID_INBOUND_WEBHOOK_SECRET || process.env.RESEND_API_KEY),
-      ),
-      hint: `Receiving address domain: ${process.env.INBOUND_EMAIL_DOMAIN ?? "not set"}`,
-    },
+    { name: "Gemini AI extraction", configured: status.gemini.configured, hint: status.gemini.hint },
+    { name: "Supabase Storage", configured: status.storage.configured, hint: status.storage.hint },
+    { name: "Stripe billing", configured: status.stripe.configured, hint: status.stripe.hint },
+    { name: "Transactional email", configured: status.email.configured, hint: status.email.hint },
+    { name: "Inbound email", configured: status.inbound.configured, hint: status.inbound.hint },
   ];
 
   return (
@@ -143,6 +121,11 @@ export default async function SettingsPage() {
           <StatCard label="Vessels" value={vessels} />
           <StatCard label="Bookings" value={bookings} />
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-300">Billing</h3>
+        <BillingActions hasCustomer={Boolean(user.stripeCustomerId)} />
       </section>
 
       <IntegrationStatus />

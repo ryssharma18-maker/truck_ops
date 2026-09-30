@@ -1,8 +1,8 @@
 ﻿import type { Metadata } from "next";
-import Link from "next/link";
 import { Ship } from "lucide-react";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { AddVesselModal } from "@/components/AddVesselModal";
 import { StatusPill, PageHeader, EmptyState } from "@/components/ui/dashboard";
 
 export const dynamic = "force-dynamic";
@@ -11,25 +11,24 @@ export const metadata: Metadata = { title: "Vessel Fleet | TruckOps AI" };
 export default async function VesselsPage() {
   const user = await requirePageUser();
 
-  const vessels = await prisma.shippingVessel.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    include: { _count: { select: { bookings: true } } },
-  });
+  const [vessels, vesselCount] = await Promise.all([
+    prisma.shippingVessel.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 60,
+      include: { _count: { select: { bookings: true } } },
+    }),
+    prisma.shippingVessel.count({ where: { userId: user.id } }),
+  ]);
 
   return (
     <div className="space-y-6 p-6 pt-8 lg:p-8">
       <PageHeader
         title="Vessel Fleet"
-        subtitle={`${vessels.length} vessel${vessels.length === 1 ? "" : "s"} registered`}
-        action={
-          <Link
-            href="/dashboard/shipping/vessels/new"
-            className="rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500"
-          >
-            Add vessel
-          </Link>
-        }
+        subtitle={`${vesselCount} vessel${vesselCount === 1 ? "" : "s"} registered${
+          vesselCount > vessels.length ? ` · showing ${vessels.length}` : ""
+        }`}
+        action={<AddVesselModal />}
       />
 
       {vessels.length === 0 ? (

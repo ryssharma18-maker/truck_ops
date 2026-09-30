@@ -5,24 +5,9 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(amount: number | string | null | undefined): string {
-  const num = typeof amount === "string" ? parseFloat(amount) : amount ?? 0;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(isNaN(num) ? 0 : num);
-}
-
-export function formatDate(date: string | Date | null | undefined): string {
-  if (!date) return "—";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(d);
-}
-
+// `formatCurrency` and `formatDate` used to live here as well. Both were dead:
+// nothing imported them, and they were near-duplicates of `formatMoney` and
+// `formatDate` in components/ui/dashboard.tsx with different rounding and
+// currency behaviour, which is the worst kind of duplicate to leave lying
+// around in a codebase that formats money. dashboard.tsx is the single
+// formatter now; see lib/money.ts for summing across currencies.

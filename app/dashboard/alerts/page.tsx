@@ -37,30 +37,48 @@ export default async function AlertsPage() {
   const now = new Date();
   const in30 = new Date(now.getTime() + 30 * DAY);
 
-  const [notifications, expiringCompliance, expiringLicences, overdueInvoices, unverified] =
-    await Promise.all([
-      prisma.notification.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      }),
-      prisma.complianceDocument.findMany({
-        where: { userId, expiryDate: { not: null, lte: in30 } },
-        orderBy: { expiryDate: "asc" },
-      }),
-      prisma.driver.findMany({
-        where: { userId, licenseExpiry: { not: null, lte: in30 } },
-        orderBy: { licenseExpiry: "asc" },
-      }),
-      prisma.invoice.findMany({
-        where: { userId, status: "overdue" },
-        orderBy: { dueDate: "asc" },
-        include: { load: { select: { loadNumber: true } } },
-      }),
-      prisma.document.count({
-        where: { userId, manuallyVerified: false, aiExtractedData: { not: Prisma.DbNull } },
-      }),
-    ]);
+  const [
+    notifications,
+    notificationTotal,
+    unreadCount,
+    expiringCompliance,
+    expiringLicences,
+    overdueInvoices,
+    unverified,
+  ] = await Promise.all([
+    prisma.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    // Real totals, because `notifications` is capped at 20 and counting that
+    // array understated the badge. The dashboard tile showed the true unread
+    // number from a `count()` while this page showed at most 20, so the same
+    // figure read differently depending on where you looked.
+    prisma.notification.count({ where: { userId } }),
+    prisma.notification.count({ where: { userId, read: false } }),
+    prisma.complianceDocument.findMany({
+      where: { userId, expiryDate: { not: null, lte: in30 } },
+      orderBy: { expiryDate: "asc" },
+      // Capped: these three feed the `alerts` array whose length is the
+      // "Open alerts" card, and each one was an unbounded read.
+      take: 100,
+    }),
+    prisma.driver.findMany({
+      where: { userId, licenseExpiry: { not: null, lte: in30 } },
+      orderBy: { licenseExpiry: "asc" },
+      take: 100,
+    }),
+    prisma.invoice.findMany({
+      where: { userId, status: "overdue" },
+      orderBy: { dueDate: "asc" },
+      take: 100,
+      include: { load: { select: { loadNumber: true } } },
+    }),
+    prisma.document.count({
+      where: { userId, manuallyVerified: false, aiExtractedData: { not: Prisma.DbNull } },
+    }),
+  ]);
 
   const derived: Alert[] = [
     ...expiringCompliance.map((c) => ({
@@ -123,7 +141,23 @@ export default async function AlertsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Open alerts" value={alerts.length} icon={<Bell className="h-4 w-4 text-cyan-400" />} />
+        <StatCard
+          label="Open alerts"
+          value={alerts.length}
+          // `alerts` merges four independently capped queries, so the card is
+          // only a true total when none of them hit its take. Say so rather
+          // than presenting a truncated merge as the full alert count.
+          hint={
+            notificationTotal > notifications.length
+              ? `notifications: ${notifications.length} of ${notificationTotal} stored`
+              : expiringCompliance.length === 100 ||
+                expiringLicences.length === 100 ||
+                overdueInvoices.length === 100
+                ? "compliance, licence and overdue lists are capped at 100 each"
+                : undefined
+          }
+          icon={<Bell className="h-4 w-4 text-cyan-400" />}
+        />
         <StatCard
           label="Critical"
           value={critical}
@@ -131,7 +165,7 @@ export default async function AlertsPage() {
         />
         <StatCard
           label="Unread notifications"
-          value={notifications.filter((n) => !n.read).length}
+          value={unreadCount}
           icon={<BellOff className="h-4 w-4 text-slate-400" />}
         />
       </div>

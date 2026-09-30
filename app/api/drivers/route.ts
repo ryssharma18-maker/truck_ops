@@ -5,6 +5,7 @@ import { handle, ok } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import * as crud from "@/lib/crudService";
 import { HttpError } from "@/lib/errors";
+import { assertCanCreate } from "@/lib/planLimits";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,9 @@ export const GET = handle(async (req) => {
 /** POST /api/drivers — create a driver for the caller. */
 export const POST = handle(async (req) => {
   const user = await requireUser();
+  // A driver is a person you will need a truck for, so it counts against the
+  // same ceiling as the fleet.
+  await assertCanCreate(user, "driver");
   const body = createDriverSchema.parse(await req.json());
 
   if (body.assignedTruckId) {

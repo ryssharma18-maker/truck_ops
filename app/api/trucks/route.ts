@@ -5,6 +5,7 @@ import * as crud from "@/lib/crudService";
 import { z } from "zod";
 import { HttpError } from "@/lib/errors";
 import type { Prisma } from "@prisma/client";
+import { assertCanCreate } from "@/lib/planLimits";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,9 @@ export const GET = handle(async (req) => {
 /** POST /api/trucks — create a truck for the caller. */
 export const POST = handle(async (req) => {
   const user = await requireUser();
+  // A truck is the unit the plan is priced and metered in, so this is the
+  // route where the ceiling actually has teeth.
+  await assertCanCreate(user, "truck");
   const body = createTruckSchema.parse(await req.json());
 
   const existing = await prisma.truck.count({

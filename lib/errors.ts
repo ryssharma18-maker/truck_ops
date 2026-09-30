@@ -7,10 +7,17 @@
  * response instead of a 500.
  */
 export class HttpError extends Error {
+  /**
+   * `headers` is merged into the error response by `errorResponse()`. It exists
+   * for the cases where a status code alone is not actionable — a 429 without
+   * `Retry-After` leaves the client guessing, and a 401 without
+   * `WWW-Authenticate` is not spec-compliant. Omit it for everything else.
+   */
   constructor(
     public status: number,
     message: string,
     public code?: string,
+    public headers?: Record<string, string>,
   ) {
     super(message);
     this.name = "HttpError";

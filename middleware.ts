@@ -12,7 +12,10 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
  * only stops unauthenticated traffic before it reaches a page render.
  */
 
-const PUBLIC_PREFIXES = ["/login", "/signup", "/pricing", "/auth/callback"];
+// "/" must be listed: the marketing homepage is public, and without it every
+// anonymous visitor to the root URL is redirected to /login. isPublic() only
+// treats "/" as an exact match, so this cannot open up any other path.
+const PUBLIC_PREFIXES = ["/", "/login", "/signup", "/pricing", "/auth/callback"];
 
 /** Endpoints that authenticate by provider signature, not by session. */
 const PUBLIC_API = [

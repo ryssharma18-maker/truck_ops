@@ -135,13 +135,19 @@ export function DocumentUploader() {
               : "Upload & extract"}
         </button>
       </div>
-      {message ? (
-        <p
-          className={`mt-3 text-sm ${message.tone === "ok" ? "text-emerald-400" : "text-rose-400"}`}
-        >
-          {message.text}
-        </p>
-      ) : null}
+      {/* The live region is always in the DOM and only its contents change.
+          Putting aria-live on the conditionally-rendered <p> instead would
+          announce nothing, because a region that is added to the page at the
+          same moment as its text is not observed as a change. */}
+      <div aria-live="polite" aria-atomic="true">
+        {message ? (
+          <p
+            className={`mt-3 text-sm ${message.tone === "ok" ? "text-emerald-400" : "text-rose-400"}`}
+          >
+            {message.text}
+          </p>
+        ) : null}
+      </div>
     </form>
   );
 }

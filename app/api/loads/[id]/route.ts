@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { handle, ok } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { HttpError } from "@/lib/errors";
+import { assertTransition } from "@/lib/loadStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,11 @@ const patchLoadSchema = z.object({
 });
 
 /**
+ * Status moves are validated by lib/loadStatus.ts, not just constrained to the
+ * enum — see the comment there for why an arbitrary jump is a money bug.
+ */
+
+/**
  * PATCH /api/loads/[id] — update an assignment or status on one of the
  * caller's loads. Every referenced truck/driver/broker must belong to the same
  * tenant, otherwise a user could attach someone else's driver to their load.
@@ -30,9 +36,11 @@ export const PATCH = handle(
 
     const load = await prisma.load.findFirst({
       where: { id: params.id, userId: user.id },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!load) throw new HttpError(404, "Load not found", "not_found");
+
+    if (body.status) assertTransition(load.status, body.status);
 
     const references: {
       field: "driverId" | "truckId" | "brokerId";

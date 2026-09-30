@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { User } from "@prisma/client";
 import { HttpError } from "@/lib/errors";
+import { supabaseAuthFailure } from "@/lib/authFailures";
 
 export { HttpError };
 
@@ -45,24 +46,50 @@ export async function requireUser(): Promise<User> {
     );
   }
 
+  let authResult;
   try {
     const { createSupabaseServerClient } = await import("@/lib/supabase/server");
-    const { prisma } = await import("@/lib/prisma");
     const supabase = createSupabaseServerClient();
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) throw new ApiError(401, "Not authenticated", "unauthenticated");
-    const user = await prisma.user.findUnique({ where: { id: data.user.id } });
-    if (!user)
-      throw new ApiError(
-        500,
-        "Account profile missing. Run supabase/rls-policies.sql to install the auth trigger.",
-        "profile_missing",
-      );
-    return user;
+    authResult = await supabase.auth.getUser();
   } catch (err) {
-    if (err instanceof ApiError) throw err;
+    console.error("[auth] Supabase session verification failed", err);
+    throw supabaseAuthFailure(err);
+  }
+
+  if (authResult.error) {
+    const failure = supabaseAuthFailure(authResult.error);
+    if (failure.status >= 500) {
+      console.error("[auth] Supabase session verification failed", {
+        status: authResult.error.status,
+        code: authResult.error.code,
+      });
+    }
+    throw failure;
+  }
+  if (!authResult.data.user) {
     throw new ApiError(401, "Not authenticated", "unauthenticated");
   }
+
+  const { prisma } = await import("@/lib/prisma");
+  let user: User | null;
+  try {
+    user = await prisma.user.findUnique({ where: { id: authResult.data.user.id } });
+  } catch (err) {
+    console.error("[auth] application profile lookup failed", err);
+    throw new ApiError(
+      503,
+      "Account profile service is temporarily unavailable",
+      "profile_service_unavailable",
+    );
+  }
+  if (!user) {
+    throw new ApiError(
+      503,
+      "Account profile is not ready. Please retry shortly.",
+      "profile_missing",
+    );
+  }
+  return user;
 }
 
 /** Higher-order handler: resolves user, catches ApiError, returns JSON. */
@@ -98,7 +125,7 @@ export function errorResponse(err: unknown): NextResponse {
   if (err instanceof HttpError) {
     return NextResponse.json(
       { error: err.message, code: err.code ?? null },
-      { status: err.status },
+      { status: err.status, headers: err.headers },
     );
   }
   // Zod validation errors

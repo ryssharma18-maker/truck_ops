@@ -5,6 +5,7 @@ import { handle, ok } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import * as crud from "@/lib/crudService";
 import { HttpError } from "@/lib/errors";
+import { assertCanCreate } from "@/lib/planLimits";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ export const GET = handle(async (req) => {
 /** POST /api/loads — create a load, optionally linking a broker by name. */
 export const POST = handle(async (req) => {
   const user = await requireUser();
+  await assertCanCreate(user, "load");
   const body = createLoadSchema.parse(await req.json());
 
   const duplicate = await prisma.load.count({
@@ -115,9 +117,13 @@ export const POST = handle(async (req) => {
       ).id;
   }
 
-  const total =
-    body.rateAmount + body.fuelSurcharge + body.detentionAmount + body.lumperAmount;
-
+  // totalInvoiceAmount is deliberately NOT written here. It is a
+  // GENERATED ALWAYS AS (rate_amount + fuel_surcharge + detention_amount +
+  // lumper_amount) STORED column in supabase/rls-policies.sql, and Postgres
+  // rejects any non-DEFAULT value on one:
+  //   ERROR: cannot insert a non-DEFAULT value into column "total_invoice_amount"
+  // Computing it here would be a duplicate source of truth anyway. The
+  // component rates below are the only inputs.
   const load = await crud.create(prisma.load, user.id, {
     loadNumber: body.loadNumber,
     status: body.status,
@@ -137,7 +143,6 @@ export const POST = handle(async (req) => {
     fuelSurcharge: body.fuelSurcharge,
     detentionAmount: body.detentionAmount,
     lumperAmount: body.lumperAmount,
-    totalInvoiceAmount: total,
     notes: body.notes ?? null,
   });
 

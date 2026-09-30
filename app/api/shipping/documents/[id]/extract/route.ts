@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { extractDocument, type ExtractableDocType } from "@/lib/services/aiService";
 import { downloadFile } from "@/lib/services/storageService";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,8 @@ function mimeFromName(name: string): string {
 export const POST = handle(
   async (req: NextRequest, { params }: { params: { id: string } }) => {
     const user = await requireUser();
+    // Each call is a billed Gemini request.
+    await enforceRateLimit("aiParse", user.id);
 
     const doc = await prisma.shippingDocument.findFirst({
       where: { id: params.id, userId: user.id },

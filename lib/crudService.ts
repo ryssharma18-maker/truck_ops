@@ -99,6 +99,13 @@ export async function create<T>(
 /**
  * Update by id, scoped to the tenant. Throws 404 when the row belongs to
  * someone else, so callers cannot probe for other tenants' ids.
+ *
+ * `data` has any `userId` stripped rather than the field simply being
+ * overwritten. `create` and `list` append `userId` last so a caller's `data`
+ * cannot win, but an update is a merge, and a caller who passed
+ * `{ userId: someoneElse }` would otherwise re-parent the row into another
+ * tenant. The 404 above proves the row was the caller's to begin with; this
+ * stops it from ceasing to be the caller's afterwards.
  */
 export async function update<T>(
   delegate: Delegate,
@@ -109,7 +116,9 @@ export async function update<T>(
 ): Promise<T> {
   const existing = await delegate.findFirst({ where: { id, userId }, select: { id: true } });
   if (!existing) throw new HttpError(404, "Not found", "not_found");
-  return (await delegate.update({ where: { id }, data, ...args })) as T;
+
+  const { userId: _ignored, ...safeData } = data;
+  return (await delegate.update({ where: { id }, data: safeData, ...args })) as T;
 }
 
 export async function remove(

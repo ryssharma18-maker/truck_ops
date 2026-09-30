@@ -81,7 +81,7 @@ export default function PricingPage() {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: plan.id, truckCount: 1 }),
+            body: JSON.stringify({ plan: plan.id }),
       });
 
       const json = (await res.json()) as { url?: string; error?: string };

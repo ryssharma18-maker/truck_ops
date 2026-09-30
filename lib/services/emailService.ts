@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { HttpError } from "@/lib/errors";
 import { uploadFile } from "@/lib/services/storageService";
+import { storageKey } from "@/lib/storageKey";
 import { extractDocument, type ExtractableDocType } from "@/lib/services/aiService";
-import { parseEmail, classifyDocument, extensionFor } from "@/lib/services/emailParser";
+import { parseEmail, classifyDocument } from "@/lib/services/emailParser";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -132,11 +133,7 @@ export async function ingestInboundEmail(raw: Buffer, recipient: string): Promis
     }
 
     const classified = classifyDocument(attachment.fileName, email.subject);
-    const ext = extensionFor(attachment.fileName, attachment.mimeType);
-    const storagePath = `${user.id}/inbound/${Date.now()}-${attachment.fileName.replace(
-      /[^a-zA-Z0-9._-]/g,
-      "_",
-    )}`;
+    const storagePath = storageKey(user.id, "inbound", attachment.fileName);
 
     try {
       const fileUrl = await uploadFile(storagePath, attachment.bytes, attachment.mimeType);

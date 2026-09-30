@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { AddBookingModal } from "@/components/AddBookingModal";
 import { StatusPill, PageHeader, EmptyState } from "@/components/ui/dashboard";
 
 export const dynamic = "force-dynamic";
@@ -16,29 +17,55 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
 export default async function ShippingBookingsPage() {
   const user = await requirePageUser();
 
-  const bookings = await prisma.shippingBooking.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    include: {
-      vessel: { select: { id: true, name: true } },
-      portOfLoading: { select: { id: true, name: true, unlocode: true } },
-      portOfDischarge: { select: { id: true, name: true, unlocode: true } },
-      _count: { select: { containers: true, documents: true, invoices: true } },
-    },
-  });
+  // The pickers in the new-booking form are populated here rather than fetched
+  // client-side, so the Server Component stays the only place that touches
+  // Prisma. Both lists are already scoped to this tenant.
+  const [bookings, bookingCount, vessels, ports] = await Promise.all([
+    prisma.shippingBooking.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        vessel: { select: { id: true, name: true } },
+        portOfLoading: { select: { id: true, name: true, unlocode: true } },
+        portOfDischarge: { select: { id: true, name: true, unlocode: true } },
+        _count: { select: { containers: true, documents: true, invoices: true } },
+      },
+    }),
+    // A real count, not `bookings.length`: the query above is capped, so its
+    // length is "how many fit on one page" and rendering it as "N bookings"
+    // understates a tenant with more than 100.
+    prisma.shippingBooking.count({ where: { userId: user.id } }),
+    prisma.shippingVessel.findMany({
+      where: { userId: user.id },
+      orderBy: { name: "asc" },
+      take: 200,
+      select: { id: true, name: true, imoNumber: true },
+    }),
+    prisma.shippingPort.findMany({
+      where: { userId: user.id },
+      orderBy: { name: "asc" },
+      take: 500,
+      select: { id: true, name: true, unlocode: true },
+    }),
+  ]);
 
   return (
     <div className="space-y-6 p-6 pt-8 lg:p-8">
       <PageHeader
         title="Shipping Bookings"
-        subtitle={`${bookings.length} booking${bookings.length === 1 ? "" : "s"}`}
+        subtitle={`${bookingCount} booking${bookingCount === 1 ? "" : "s"}${bookingCount > bookings.length ? ` (showing the ${bookings.length} most recent)` : ""}`}
         action={
-          <Link
-            href="/dashboard/shipping/bookings/new"
-            className="rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500"
-          >
-            New booking
-          </Link>
+          <AddBookingModal
+            vessels={vessels.map((v) => ({
+              id: v.id,
+              label: `${v.name} · IMO ${v.imoNumber}`,
+            }))}
+            ports={ports.map((p) => ({
+              id: p.id,
+              label: `${p.name} (${p.unlocode})`,
+            }))}
+          />
         }
       />
 

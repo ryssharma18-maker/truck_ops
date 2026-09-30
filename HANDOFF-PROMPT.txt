@@ -1,0 +1,87 @@
+You are taking over engineering work on an existing, partially-finished product.
+Read `AGENTS.md` and `HANDOFF.md` in the repo root before touching code. Treat
+both as ground truth over anything you infer, and verify claims against the
+actual files before you rely on them.
+
+## The product
+
+TruckOps AI — multi-tenant B2B logistics SaaS for trucking carriers with an
+attached maritime/shipping vertical. Next.js 14 App Router, TypeScript, Prisma,
+Supabase Postgres + Auth, Stripe REST (no SDK), Resend/SendGrid, Gemini.
+Windows dev box, Node 24, repo under OneDrive.
+
+This is real software, not a demo: auth is real, the database is real, the seed
+data is real. Anything unconfigured must fail closed rather than fake success.
+
+## The one rule that matters
+
+Prisma connects as the database owner — `postgres`, which has
+`rolbypassrls = true` — so it **bypasses RLS entirely**. The `where` clause is
+the tenant boundary, full stop. Every query is scoped by `userId`; a forgotten
+one leaks another carrier's data and returns no error. Prefer
+`lib/crudService.ts` helpers, which force `userId` and throw 403 on a
+cross-tenant filter. Cross-tenant ids should 404, not 403.
+
+RLS is therefore not protecting application code. It protects anon-key clients.
+That distinction matters: RLS being correct is necessary, and still not sufficient.
+
+## Current state
+
+- Base commit `7483b8b`, **no Git remote**, and a large uncommitted working tree.
+  Do not discard it. `HANDOFF.md` §6 summarises it by area.
+- The B1–B14 audit backlog in `HANDOFF.md` §8 is **fully fixed and verified**.
+  Read §8 for the reasoning and, more importantly, for the short list of
+  **open follow-ups** that are deliberately left undone.
+- Two of those follow-ups are worth reading first: a booking detail page that
+  turns a database outage into a 404, and Stripe webhook deduplication that
+  does not yet handle out-of-order events.
+- `typecheck`, `lint`, `build` and every `verify:*` suite pass, including
+  `npx tsx scripts/verify-live-db.ts` against the real database.
+- Dev server runs on **:3001**. Next.js takes 3000 if free and increments
+  otherwise — check the port before starting a second server.
+- Never edit markdown with PowerShell `Get-Content`/`Set-Content`. It re-encodes
+  UTF-8 as Windows-1252 and mangles every em dash and arrow. Use the editor
+  tools, which handle encoding correctly.
+
+## Environment traps that have actually cost time
+
+- `connect_timeout=30` is required on both database URLs. Prisma's 5s default
+  is below the 2.4–11.6s cold TLS handshake on this network and produces
+  `P1001: Can't reach database server` on a healthy host. Next.js's error advice
+  blames the port; the port is not the variable.
+- Stop all node processes before `prisma generate` or the Windows DLL stays
+  locked (`EPERM ... rename`).
+- If you see `EINVAL: invalid argument, readlink '.next\...'`, that is OneDrive
+  evicting the build dir, not a corrupt build. `Remove-Item .next -Recurse -Force`,
+  then `attrib +P -U /S /D .next`.
+- Never paste a real credential into a tracked file. `.env.example` is tracked
+  and must stay empty; `npm run verify:secrets` runs in CI and has caught a leak
+  already.
+- `SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` are unset, so Storage,
+  inbound email and AI extraction are untested against their providers.
+
+## How to work
+
+Measure, don't speculate. When something is intermittent, run enough attempts to
+report real numbers and the method — a 15-per-port comparison is what proved
+the port was a red herring. Separate *latent* defects from *active* ones and say
+which. Verify before you claim: a subagent asserted `POST /api/loads` "500s on
+every call", and checking `pg_attribute.attgenerated` showed the column is not
+generated today, so it is latent, not active.
+
+Prove a fix is not the fix. A check that cannot fail is not a check: after
+adding an RLS coverage guard, delete the entry it protects and confirm the suite
+goes red before trusting it. Equally, when a change seems to break something,
+isolate it before believing it — a failing live test after a schema migration
+turned out to be a `connection_limit=1` pool timeout, not a permissions break.
+
+Prefer fixing a root cause over adding a retry. Do not claim a feature works
+until you have run something that proves it — returning 200 from `/pricing` or
+`/login` proves nothing, because neither page touches the database, and
+`/dashboard` redirects before querying.
+
+Keep changes scoped and verifiable. Run `npm run typecheck`, `npm run lint` and
+the relevant `verify:*` script before reporting done, and say which ones you ran.
+
+First task: read the **open follow-ups** in `HANDOFF.md` §8, confirm each still
+applies against the current code, and tell me which you want to take first.

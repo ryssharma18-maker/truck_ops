@@ -31,11 +31,15 @@ export default async function CompliancePage() {
   const user = await requirePageUser();
   const soon = new Date(Date.now() + 30 * DAY);
 
-  const [items, expired, expiring] = await Promise.all([
+  const [items, total, expired, expiring] = await Promise.all([
     prisma.complianceDocument.findMany({
       where: { userId: user.id },
       orderBy: [{ expiryDate: "asc" }, { title: "asc" }],
+      // Capped; the "Documents" card below uses a real count, because
+      // `items.length` was reported as the total and would have read as 200.
+      take: 200,
     }),
+    prisma.complianceDocument.count({ where: { userId: user.id } }),
     prisma.complianceDocument.count({
       where: { userId: user.id, expiryDate: { lt: new Date() } },
     }),
@@ -61,7 +65,8 @@ export default async function CompliancePage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           label="Documents"
-          value={items.length}
+          value={total}
+          hint={total > items.length ? `showing the ${items.length} nearest expiry` : undefined}
           icon={<ShieldCheck className="h-4 w-4 text-cyan-400" />}
         />
         <StatCard

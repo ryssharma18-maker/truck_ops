@@ -25,13 +25,14 @@ export default async function ShippingContainersPage() {
   const user = await requirePageUser();
   const userId = user.id;
 
-  const [containers, reefer, unassigned, totalWeight] = await Promise.all([
+  const [containers, total, reefer, unassigned, totalWeight] = await Promise.all([
     prisma.shippingContainer.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       take: 200,
       include: { booking: { select: { id: true, bookingNumber: true } } },
     }),
+    prisma.shippingContainer.count({ where: { userId } }),
     prisma.shippingContainer.count({ where: { userId, type: "reefer" } }),
     prisma.shippingContainer.count({ where: { userId, bookingId: null } }),
     prisma.shippingContainer.aggregate({ where: { userId }, _sum: { weightKg: true } }),
@@ -49,7 +50,8 @@ export default async function ShippingContainersPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           label="Total containers"
-          value={containers.length}
+          value={total}
+          hint={total > containers.length ? `showing the ${containers.length} most recent` : undefined}
           icon={<Package className="h-4 w-4 text-sky-400" />}
         />
         <StatCard

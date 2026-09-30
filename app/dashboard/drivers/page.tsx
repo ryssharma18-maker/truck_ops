@@ -20,15 +20,19 @@ export const metadata: Metadata = { title: "Drivers | TruckOps AI" };
 export default async function DriversPage() {
   const user = await requirePageUser();
 
-  const [drivers, active, expiringSoon] = await Promise.all([
+  const [drivers, total, active, expiringSoon] = await Promise.all([
     prisma.driver.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
+      // Capped for the same reason as the trucks list; `drivers.length` was
+      // being rendered as the roster size.
+      take: 200,
       include: {
         assignedTruck: { select: { id: true, truckNumber: true } },
         _count: { select: { loads: true } },
       },
     }),
+    prisma.driver.count({ where: { userId: user.id } }),
     prisma.driver.count({ where: { userId: user.id, status: "active" } }),
     prisma.driver.count({
       where: {
@@ -42,12 +46,14 @@ export default async function DriversPage() {
     <div className="space-y-6 p-6 pt-8 lg:p-8">
       <PageHeader
         title="Drivers"
-        subtitle={`${drivers.length} driver${drivers.length === 1 ? "" : "s"} on file`}
+        subtitle={`${total} driver${total === 1 ? "" : "s"} on file${
+          total > drivers.length ? ` · showing the ${drivers.length} most recent` : ""
+        }`}
         action={<AddDriverModal />}
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total drivers" value={drivers.length} icon={<Users className="h-4 w-4 text-sky-400" />} />
+        <StatCard label="Total drivers" value={total} icon={<Users className="h-4 w-4 text-sky-400" />} />
         <StatCard label="Active" value={active} icon={<UserCheck className="h-4 w-4 text-emerald-400" />} />
         <StatCard
           label="License expiring ≤30d"

@@ -28,13 +28,14 @@ export default async function ShippingDocsPage() {
   const user = await requirePageUser();
   const userId = user.id;
 
-  const [documents, bookings, pending, completed] = await Promise.all([
+  const [documents, total, bookings, pending, completed] = await Promise.all([
     prisma.shippingDocument.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       take: 100,
       include: { booking: { select: { id: true, bookingNumber: true } } },
     }),
+    prisma.shippingDocument.count({ where: { userId } }),
     prisma.shippingBooking.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -57,7 +58,8 @@ export default async function ShippingDocsPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           label="Documents"
-          value={documents.length}
+          value={total}
+          hint={total > documents.length ? `showing the ${documents.length} most recent` : undefined}
           icon={<ScrollText className="h-4 w-4 text-sky-400" />}
         />
         <StatCard

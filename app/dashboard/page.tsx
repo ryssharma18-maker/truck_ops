@@ -117,7 +117,7 @@ export default async function DashboardPage() {
         >
           <span className="flex items-center gap-3">
             <Bell className="h-4 w-4 text-rose-400" />
-            <span className="text-sm text-slate-300">Unread alerts</span>
+            <span className="text-sm text-slate-300">Unread notifications</span>
           </span>
           <span className="text-lg font-bold text-white">{unreadAlerts}</span>
         </Link>

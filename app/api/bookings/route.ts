@@ -5,6 +5,7 @@ import { handle, ok } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import * as crud from "@/lib/crudService";
 import { HttpError } from "@/lib/errors";
+import { assertCanCreate } from "@/lib/planLimits";
 
 export const dynamic = "force-dynamic";
 
@@ -74,6 +75,7 @@ export const GET = handle(async (req) => {
 /** POST /api/bookings — create a shipping booking. */
 export const POST = handle(async (req) => {
   const user = await requireUser();
+  await assertCanCreate(user, "booking");
   const body = createBookingSchema.parse(await req.json());
 
   const duplicate = await prisma.shippingBooking.count({

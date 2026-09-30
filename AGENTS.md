@@ -12,7 +12,9 @@ npm run build          # prisma generate && next build
 npm run check          # typecheck + lint + build
 npm run verify:secrets # scans git-tracked files for committed credentials
 npm run verify:email   # MIME parser runtime checks
+npm run verify:email-send # outbound template/escaping checks
 npm run verify:webhook # HMAC signature verification checks
+npm run verify:stripe  # offline Stripe signature and status checks
 npm run db:migrate     # create + apply a migration (dev)
 npm run db:deploy      # apply migrations (prod)
 npm run db:seed        # rebuild the demo@truckops.ai dataset
@@ -66,6 +68,47 @@ attrib +P -U /S /D node_modules\.prisma
 The permanent fix is to set this folder to **Always keep on this device** in
 OneDrive, or exclude it from syncing, then sync down once. The `attrib` calls
 only pin files that already exist locally.
+
+## Database: connect_timeout is load-bearing
+
+Both pooler ports drop connections on a home network. Measured over 15 attempts
+each: session `5432` failed 1, transaction `6543` failed 1. The port is not the
+variable that matters.
+
+What actually failed was Prisma's **5 second default connect timeout**. A cold
+TLS handshake through a transparent proxy takes 2.4s–11.6s on this network, so
+roughly one connection in fifteen blew the timeout and surfaced as:
+
+```
+P1001: Can't reach database server at `aws-0-....pooler.supabase.com:6543`
+```
+
+Next.js responds to that error by advising you to split `DATABASE_URL` onto
+`6543` and `DIRECT_URL` onto `5432`. That advice is right about the split and
+useless about the outage: the split is worth having, but it does not fix a
+timeout. Adding `connect_timeout=30` took the same probe from 14/15 to **24/24**.
+
+Keep `connect_timeout=30` on both URLs. If a `P1001` appears, check the timeout
+before touching the port.
+
+Runtime queries go to the transaction pooler (`6543`, `pgbouncer=true`,
+`connection_limit=1`) because serverless functions open many short-lived
+connections and the session pooler holds one per client. Migrations go to the
+session pooler (`5432`) via `DIRECT_URL`; they need advisory locks, so they
+cannot use the transaction pooler. The non-pooler host is unreachable here
+because the ISP proxies it.
+
+To prove the runtime path actually reaches the database, sign an event and send
+it to the webhook: a `400 unknown_user` means Prisma ran a real `findUnique`.
+
+```powershell
+$env:WEBHOOK_TEST_BASE="http://localhost:3001"   # Next shifts ports if 3000 is busy
+npm run verify:stripe:webhook
+```
+
+**Never verify pages only on `/pricing` and `/login`.** Those are public and
+never touch Prisma, so they return 200 while the database is down. `/dashboard`
+redirects to `/login` before any query runs, so it proves nothing either.
 
 ## Tenant isolation is not optional
 

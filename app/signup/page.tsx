@@ -33,27 +33,34 @@ export default function SignupPage() {
 
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+      if (data.session) {
+        router.replace("/dashboard");
+        router.refresh();
+        return;
+      }
+
+      setMessage(
+        "Account created. Check your email to confirm your account, then sign in."
+      );
+    } catch {
+      // signUp is a network call, so it can reject outright. Without this the
+      // throw escaped handleSignup and left `loading` true forever, which
+      // disabled the submit button with no way to recover short of a reload.
+      setError("Could not reach the sign-up service. Please try again.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (data.session) {
-      router.replace("/dashboard");
-      router.refresh();
-      return;
-    }
-
-    setMessage(
-      "Account created. Check your email to confirm your account, then sign in."
-    );
-    setLoading(false);
   }
 
   return (
@@ -69,10 +76,11 @@ export default function SignupPage() {
 
         <form onSubmit={handleSignup} className="space-y-5">
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-300">
+            <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-300">
               Email
             </label>
             <input
+              id="email"
               type="email"
               required
               autoComplete="email"
@@ -84,10 +92,14 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-300">
+            <label
+              htmlFor="password"
+              className="mb-2 block text-sm font-medium text-slate-300"
+            >
               Password
             </label>
             <input
+              id="password"
               type="password"
               required
               minLength={8}
@@ -100,10 +112,14 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-300">
+            <label
+              htmlFor="confirmPassword"
+              className="mb-2 block text-sm font-medium text-slate-300"
+            >
               Confirm Password
             </label>
             <input
+              id="confirmPassword"
               type="password"
               required
               minLength={8}
@@ -115,17 +131,27 @@ export default function SignupPage() {
             />
           </div>
 
-          {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-              {error}
-            </div>
-          )}
+          {/* Both banners are live regions: signup either fails or tells the
+              user to go and check their inbox, and neither outcome changes the
+              page in a way a screen reader would otherwise announce. */}
+          <div aria-live="assertive">
+            {error ? (
+              <div
+                role="alert"
+                className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300"
+              >
+                {error}
+              </div>
+            ) : null}
+          </div>
 
-          {message && (
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
-              {message}
-            </div>
-          )}
+          <div aria-live="polite">
+            {message ? (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
+                {message}
+              </div>
+            ) : null}
+          </div>
 
           <button
             type="submit"

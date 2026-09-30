@@ -2,11 +2,27 @@
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+/**
+ * Only same-origin relative paths are honoured. An attacker can send
+ * /login?next=https://evil.example and get a real account's session pasted
+ * into a page they control, so an absolute URL, a protocol-relative one, or a
+ * backslash-escaped variant all fall back to the dashboard.
+ */
+function safeNext(raw: string | null): string {
+  if (!raw) return "/dashboard";
+  if (!raw.startsWith("/")) return "/dashboard";
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return "/dashboard";
+  if (raw.includes("\\")) return "/dashboard";
+  return raw;
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createSupabaseBrowserClient();
 
   const [email, setEmail] = useState("");
@@ -14,24 +30,39 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // middleware.ts sends ?next= for the page the visitor actually asked for.
+  // Without this, deep links to /dashboard/invoices bounce back to the root.
+  const next = safeNext(searchParams.get("next"));
+
   async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      setError(error.message);
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
+
+      router.replace(next);
+      router.refresh();
+    } catch (err) {
+      // A rejected promise here would skip the reset below and leave the
+      // button disabled forever.
+      setError(
+        err instanceof Error
+          ? "Could not reach the sign-in service. Try again."
+          : "Sign-in failed. Try again.",
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.replace("/dashboard");
-    router.refresh();
   }
 
   return (
@@ -45,27 +76,37 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-5">
+        <form onSubmit={handleLogin} className="space-y-5" noValidate={false}>
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-300">
+            <label
+              htmlFor="email"
+              className="mb-2 block text-sm font-medium text-slate-300"
+            >
               Email
             </label>
             <input
+              id="email"
+              name="email"
               type="email"
               required
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-cyan-400"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-cyan-400 focus-visible:ring-2 focus-visible:ring-cyan-400"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-300">
+            <label
+              htmlFor="password"
+              className="mb-2 block text-sm font-medium text-slate-300"
+            >
               Password
             </label>
             <input
+              id="password"
+              name="password"
               type="password"
               required
               minLength={8}
@@ -73,12 +114,16 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-cyan-400"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-cyan-400 focus-visible:ring-2 focus-visible:ring-cyan-400"
             />
           </div>
 
           {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300"
+            >
               {error}
             </div>
           )}
@@ -103,5 +148,21 @@ export default function LoginPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams needs a Suspense boundary, or the whole route opts out of
+  // static rendering and the build warns.
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen flex items-center justify-center bg-slate-950">
+          <p className="text-slate-400">Loading…</p>
+        </main>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

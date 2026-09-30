@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { handle, ok, fail, HttpError } from "@/lib/api";
 import { ingestInboundEmail } from "@/lib/services/emailService";
-import { verifyWebhookSignature } from "@/lib/services/webhookAuth";
+import { verifyWebhookSignature, verifySvixSignature, readRawBody, constantTimeEqual } from "@/lib/services/webhookAuth";
 import { parseEmail } from "@/lib/services/emailParser";
 
 export const dynamic = "force-dynamic";
@@ -103,18 +103,27 @@ function synthesizeRaw(envelope: z.infer<typeof JSON_ENVELOPE>): Buffer {
 }
 
 export const POST = handle(async (req: NextRequest) => {
-  const rawBody = Buffer.from(await req.arrayBuffer());
+  // Capped read: this endpoint is unauthenticated, so an attacker could
+  // otherwise force an unbounded allocation before we even check the signature.
+  const rawBody = await readRawBody(req);
   if (rawBody.length === 0) return fail("Empty request body", 400);
 
   const contentType = req.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json");
   const sendgridSecret = headerSecret(req, "x-inbound-secret");
   const resendSecret = headerSecret(req, "x-resend-signature");
+  // Resend/Svix sends three headers; SendGrid Inbound Parse uses a static token.
+  const svixSigned =
+    req.headers.get("svix-id") !== null &&
+    req.headers.get("svix-timestamp") !== null &&
+    req.headers.get("svix-signature") !== null;
 
   if (isJson) {
-    // Resend signs `svix` headers; SendGrid Inbound Parse uses a static
-    // shared token header. Verify whichever secret is configured.
-    if (resendSecret) {
+    if (svixSigned) {
+      verifySvixSignature(req, rawBody, {
+        secret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,
+      });
+    } else if (resendSecret) {
       verifyWebhookSignature(req, rawBody, {
         secret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,
         header: "x-resend-signature",
@@ -125,7 +134,10 @@ export const POST = handle(async (req: NextRequest) => {
       if (!expected) {
         throw new HttpError(503, "Inbound email is not configured", "webhook_not_configured");
       }
-      if (sendgridSecret !== expected) {
+      // constantTimeEqual, like the raw branch below. This used to be a plain
+      // `!==`, which leaks the length and a byte-at-a-time match prefix of the
+      // shared token to anyone who can time the response.
+      if (!constantTimeEqual(sendgridSecret, expected)) {
         throw new HttpError(401, "Invalid webhook secret", "invalid_signature");
       }
     } else {
@@ -157,9 +169,13 @@ export const POST = handle(async (req: NextRequest) => {
     if (!expected) {
       throw new HttpError(503, "Inbound email is not configured", "webhook_not_configured");
     }
-    if (secretHeader !== expected) {
+    if (!constantTimeEqual(secretHeader, expected)) {
       throw new HttpError(401, "Invalid webhook secret", "invalid_signature");
     }
+  } else if (svixSigned) {
+    verifySvixSignature(req, rawBody, {
+      secret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,
+    });
   } else {
     verifyWebhookSignature(req, rawBody, {
       secret: process.env.RESEND_INBOUND_WEBHOOK_SECRET,

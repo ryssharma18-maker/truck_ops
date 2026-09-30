@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { extractDocument } from "@/lib/services/aiService";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,15 @@ const MAX_BYTES = 15 * 1024 * 1024;
  * Stateless extraction: parses an uploaded rate confirmation and returns the
  * fields without persisting a Document row. Use /api/documents/upload followed
  * by /api/documents/[id]/extract when the document should be kept.
+ *
+ * This is the most expensive route in the app: every call is a Gemini request
+ * billed to us, and a 15 MB upload is accepted per call. The per-tenant
+ * limiter is the only thing between a script and a large bill, so it runs
+ * before the body is read.
  */
 export const POST = handle(async (req: NextRequest) => {
-  await requireUser();
+  const user = await requireUser();
+  await enforceRateLimit("parseRateConfirm", user.id);
 
   const form = await req.formData();
   const file = form.get("file");

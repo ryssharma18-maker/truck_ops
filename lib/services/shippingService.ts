@@ -50,3 +50,20 @@ export async function bookingDetail(userId: string, id: string) {
   if (!b) throw new HttpError(404, "Booking not found");
   return b;
 }
+
+/** Page adapter: only a genuinely missing or non-owned booking becomes a 404. */
+export async function bookingDetailOrNull<T>(
+  load: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await load();
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) return null;
+    console.error("[shipping-booking] failed to load booking detail", error);
+    throw error;
+  }
+}
+
+export function bookingDetailForPage(userId: string, id: string) {
+  return bookingDetailOrNull(() => bookingDetail(userId, id));
+}

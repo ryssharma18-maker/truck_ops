@@ -156,13 +156,16 @@ export function ShippingDocUploader({ bookings }: { bookings: { id: string; book
               : "Upload & extract"}
         </button>
       </div>
-      {message ? (
-        <p
-          className={`mt-3 text-sm ${message.tone === "ok" ? "text-emerald-400" : "text-rose-400"}`}
-        >
-          {message.text}
-        </p>
-      ) : null}
+      {/* Always-rendered live region; see the note in DocumentUploader. */}
+      <div aria-live="polite" aria-atomic="true">
+        {message ? (
+          <p
+            className={`mt-3 text-sm ${message.tone === "ok" ? "text-emerald-400" : "text-rose-400"}`}
+          >
+            {message.text}
+          </p>
+        ) : null}
+      </div>
     </form>
   );
 }

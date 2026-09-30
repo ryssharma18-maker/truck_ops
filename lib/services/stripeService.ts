@@ -126,7 +126,6 @@ export async function createCheckoutSession(opts: {
     success_url: `${appUrl()}/dashboard/settings?billing=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl()}/pricing?billing=cancelled`,
     client_reference_id: opts.userId,
-    customer_email: opts.email,
     // Echoed back on the webhook so the subscription row can be tied to the
     // account without trusting the email.
     "metadata[userId]": opts.userId,
@@ -137,7 +136,15 @@ export async function createCheckoutSession(opts: {
     "subscription_data[metadata][truckCount]": String(opts.truckCount),
   };
 
-  if (opts.stripeCustomerId) params.customer = opts.stripeCustomerId;
+  if (opts.stripeCustomerId) {
+    // Stripe rejects a session that carries both `customer` and
+    // `customer_email`, so the id wins when we already have one. The email is
+    // still recorded above in metadata for the webhook to cross-check.
+    params.customer = opts.stripeCustomerId;
+  } else {
+    params.customer_email = opts.email;
+  }
+
   if (opts.trialDays && opts.trialDays > 0) {
     params["subscription_data[trial_period_days]"] = String(opts.trialDays);
   }
@@ -190,7 +197,8 @@ export type SignatureResult =
  */
 export function verifyStripeSignature(opts: {
   header: string | null | undefined;
-  rawBody: string;
+  /** The exact bytes as received. A Buffer is preferred; a string is utf8-encoded. */
+  rawBody: string | Buffer;
   secret: string;
   toleranceSeconds?: number;
   nowMs?: number;
@@ -225,8 +233,13 @@ export function verifyStripeSignature(opts: {
     return { ok: false, reason: `timestamp outside ${tolerance}s tolerance` };
   }
 
+  const prefix = Buffer.from(`${timestamp}.`, "utf8");
+  const body =
+    typeof opts.rawBody === "string"
+      ? Buffer.from(opts.rawBody, "utf8")
+      : opts.rawBody;
   const expected = createHmac("sha256", opts.secret)
-    .update(`${timestamp}.${opts.rawBody}`, "utf8")
+    .update(Buffer.concat([prefix, body]))
     .digest("hex");
 
   const expectedBuf = Buffer.from(expected, "utf8");
@@ -265,7 +278,26 @@ export interface StripeSubscription {
 export interface StripeEvent<T = unknown> {
   id: string;
   type: string;
+  created: number;
   data: { object: T };
+}
+
+export type StripeEventDisposition = "apply" | "duplicate" | "stale";
+
+/**
+ * Decide whether a verified webhook event may update subscription state.
+ * Stripe event IDs are globally unique; the account timestamp protects state
+ * from events delivered after a newer subscription change.
+ */
+export function stripeEventDisposition(opts: {
+  eventId: string;
+  recordedEventId?: string | null;
+  eventCreated: number;
+  lastAppliedCreated: number;
+}): StripeEventDisposition {
+  if (opts.recordedEventId === opts.eventId) return "duplicate";
+  if (opts.eventCreated <= opts.lastAppliedCreated) return "stale";
+  return "apply";
 }
 
 /**

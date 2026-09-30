@@ -158,16 +158,7 @@ export function Cell({ children }: { children: ReactNode }) {
   return <td className="px-4 py-3 text-slate-300">{children}</td>;
 }
 
-const dateFmt = new Intl.DateTimeFormat("en-US", {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-});
-
-export const formatDate = (v: Date | string | null | undefined) =>
-  v ? dateFmt.format(new Date(v)) : "—";
-
-export const formatMoney = (v: number | string | null | undefined, currency = "USD") =>
-  typeof v === "number" || typeof v === "string"
-    ? new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(v))
-    : "—";
+// Formatting lives in lib/format.ts rather than here, so that non-React code
+// (lib/money.ts, the verify scripts) can use it without importing a .tsx. These
+// re-exports keep every existing page import working.
+export { formatDate, formatMoney } from "@/lib/format";

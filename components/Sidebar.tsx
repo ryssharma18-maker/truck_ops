@@ -53,6 +53,13 @@ const SECTIONS = [
   },
 ] as const;
 
+// Every href in one list, widened to string. Left as a union of the const
+// tuples, flatMap infers a union of arrays and the .map() below loses its
+// element type entirely.
+const navHrefs: readonly string[] = SECTIONS.flatMap((s) =>
+  s.items.map((i) => i.href),
+);
+
 export function Sidebar({
   isOpen,
   setIsOpen,
@@ -62,8 +69,15 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
 
-  const isActive = (href: string) =>
-    href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+  // The deepest link that is an ancestor of (or equal to) the current path.
+  // A plain startsWith() made "/dashboard/shipping" match every shipping
+  // sub-route, so both "Shipping Command" and "Vessels" rendered as active at
+  // once and aria-current was ambiguous.
+  const activeHref = navHrefs
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
+
+  const isCurrent = (href: string) => href === activeHref;
 
   return (
     <>
@@ -102,7 +116,7 @@ export function Sidebar({
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
-                  const active = isActive(item.href);
+                  const active = isCurrent(item.href);
                   return (
                     <Link
                       key={item.href}

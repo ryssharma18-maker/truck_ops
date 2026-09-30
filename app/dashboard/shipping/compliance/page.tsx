@@ -24,13 +24,19 @@ export default async function ShippingCompliancePage() {
   const userId = user.id;
   const in60 = new Date(Date.now() + 60 * DAY);
 
-  const [documents, manifests, expiring, receivedByEmail] = await Promise.all([
+  const [documents, manifests, expiring, expiringCount, receivedByEmail] = await Promise.all([
     prisma.shippingDocument.count({ where: { userId } }),
     prisma.shippingManifest.count({ where: { userId } }),
     prisma.shippingDocument.findMany({
       where: { userId, expiresAt: { not: null, lte: in60 } },
       orderBy: { expiresAt: "asc" },
+      // Capped: the card below counted the returned rows, so this is the one
+      // list on the page that needed a real count alongside the take.
+      take: 200,
       include: { booking: { select: { id: true, bookingNumber: true } } },
+    }),
+    prisma.shippingDocument.count({
+      where: { userId, expiresAt: { not: null, lte: in60 } },
     }),
     prisma.shippingDocument.count({ where: { userId, source: "email" } }),
   ]);
@@ -51,7 +57,8 @@ export default async function ShippingCompliancePage() {
         <StatCard label="Manifests" value={manifests} />
         <StatCard
           label="Expiring ≤60d"
-          value={expiring.length}
+          value={expiringCount}
+          hint={expiringCount > expiring.length ? `showing the ${expiring.length} soonest` : undefined}
           icon={<CheckCircle2 className="h-4 w-4 text-amber-400" />}
         />
         <StatCard

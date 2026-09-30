@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Ship, Anchor, Box, FileText, Receipt, ScrollText } from "lucide-react";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { totalsByCurrency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Shipping Command | TruckOps AI" };
@@ -19,7 +20,10 @@ const tiles = [
 export default async function ShippingDashboard() {
   const user = await requirePageUser();
   const userId = user.id;
-  const soon = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  // 60 days, to match the window /dashboard/shipping/compliance actually lists.
+  // It was 30 here, so the tile showed a smaller number than the page you land
+  // on, and the label said nothing about a window at all.
+  const soon = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
   const [
     vessels,
@@ -44,7 +48,8 @@ export default async function ShippingDashboard() {
       where: { userId, extractionStatus: { in: ["pending", "processing"] } },
     }),
     prisma.shippingInvoice.count({ where: { userId, status: { in: ["sent", "overdue"] } } }),
-    prisma.shippingInvoice.aggregate({
+    prisma.shippingInvoice.groupBy({
+      by: ["currency"],
       where: { userId, status: { in: ["sent", "overdue"] } },
       _sum: { amount: true },
     }),
@@ -60,6 +65,10 @@ export default async function ShippingDashboard() {
     openInvoices,
     expiringDocs,
   };
+
+  // Was `_sum.amount` across every open invoice, labelled "$". With more than
+  // one currency in play that was euros added to dollars. See lib/money.ts.
+  const receivables = totalsByCurrency(openInvoiceAmount);
 
   return (
     <div className="space-y-6 p-6 pt-8 lg:p-8">
@@ -108,19 +117,18 @@ export default async function ShippingDashboard() {
 
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
           <h3 className="text-sm font-semibold text-slate-300">Receivables</h3>
-          <div className="mt-4 text-2xl font-bold text-white">
-            ${(openInvoiceAmount._sum.amount?.toNumber() ?? 0).toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-            })}
-          </div>
+          <div className="mt-4 text-2xl font-bold text-white">{receivables.text}</div>
           <p className="mt-1 text-sm text-slate-500">
+            {receivables.mixed
+              ? `${receivables.hint} · `
+              : ""}
             {openInvoices} open shipping invoice{openInvoices === 1 ? "" : "s"} ·{" "}
             <Link href="/dashboard/shipping/invoices" className="text-cyan-400 hover:underline">
               Review
             </Link>
           </p>
           <p className="mt-3 text-sm text-slate-500">
-            {expiringDocs} document{expiringDocs === 1 ? "" : "s"} expiring within 30 days ·{" "}
+            {expiringDocs} document{expiringDocs === 1 ? "" : "s"} expiring within 60 days ·{" "}
             <Link href="/dashboard/shipping/compliance" className="text-cyan-400 hover:underline">
               Compliance
             </Link>

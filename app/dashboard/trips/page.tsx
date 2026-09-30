@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Route, Boxes } from "lucide-react";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -21,7 +22,7 @@ export const metadata: Metadata = { title: "Trips | TruckOps AI" };
 export default async function TripsPage() {
   const user = await requirePageUser();
 
-  const [loads, inTransit, pendingCount, revenue] = await Promise.all([
+  const [loads, total, inTransit, pendingCount, revenue] = await Promise.all([
     prisma.load.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -33,6 +34,7 @@ export default async function TripsPage() {
         _count: { select: { documents: true, invoices: true } },
       },
     }),
+    prisma.load.count({ where: { userId: user.id } }),
     prisma.load.count({ where: { userId: user.id, status: "in_transit" } }),
     prisma.load.count({ where: { userId: user.id, status: "pending" } }),
     prisma.load.aggregate({ where: { userId: user.id }, _sum: { rateAmount: true } }),
@@ -46,7 +48,12 @@ export default async function TripsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Loads" value={loads.length} icon={<Boxes className="h-4 w-4 text-sky-400" />} />
+        <StatCard
+          label="Loads"
+          value={total}
+          hint={total > loads.length ? `showing the ${loads.length} most recent` : undefined}
+          icon={<Boxes className="h-4 w-4 text-sky-400" />}
+        />
         <StatCard label="In transit" value={inTransit} icon={<Route className="h-4 w-4 text-cyan-400" />} />
         <StatCard
           label="Booked rate value"
@@ -66,7 +73,14 @@ export default async function TripsPage() {
         >
           {loads.map((load) => (
             <TableRow key={load.id}>
-              <td className="px-4 py-3 font-medium text-white">{load.loadNumber}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <Link
+                      href={`/dashboard/trips/${load.id}`}
+                      className="text-cyan-400 hover:underline"
+                    >
+                      {load.loadNumber}
+                    </Link>
+                  </td>
               <Cell>{load.broker?.companyName ?? "—"}</Cell>
               <Cell>{load.truck?.truckNumber ?? "—"}</Cell>
               <Cell>{load.driver?.fullName ?? "—"}</Cell>

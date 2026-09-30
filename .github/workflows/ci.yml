@@ -46,7 +46,8 @@ jobs:
           # failing loudly if code starts reading a real secret at build time.
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
-          NEXT_PUBLIC_DEMO_MODE: "true"
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          RESEND_API_KEY: placeholder-resend-key
 
   prisma:
     name: Prisma schema check
@@ -103,8 +104,23 @@ jobs:
       - name: MIME parser checks
         run: npm run verify:email
 
+      - name: Outbound email template checks
+        run: npm run verify:email-send
+
       - name: Webhook signature checks
         run: npm run verify:webhook
 
       - name: Stripe signature checks
         run: npm run verify:stripe
+
+      - name: Authentication and signup hardening checks
+        run: npm run verify:auth
+
+      - name: Booking detail error checks
+        run: npm run verify:booking-errors
+
+      - name: Plan limit checks
+        run: npm run verify:plans
+
+      - name: Workflow correctness checks
+        run: npm run verify:workflow

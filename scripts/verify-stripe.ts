@@ -14,6 +14,7 @@ import {
   mapSubscriptionStatus,
   verifyStripeSignature,
   PLANS,
+  stripeEventDisposition,
 } from "../lib/services/stripeService";
 
 let failures = 0;
@@ -196,6 +197,42 @@ check(
   ["active", "trialing", "past_due", "canceled", "incomplete", "unpaid", "weird"]
     .map(mapSubscriptionStatus)
     .every((v) => ["active", "trialing", "past_due", "canceled"].includes(v)),
+);
+
+console.log("\nsubscription webhook ordering and idempotency");
+
+check(
+  "a new subscription event is applied",
+  stripeEventDisposition({
+    eventId: "evt_new",
+    eventCreated: 200,
+    lastAppliedCreated: 199,
+  }) === "apply",
+);
+check(
+  "an out-of-order older event is ignored",
+  stripeEventDisposition({
+    eventId: "evt_old",
+    eventCreated: 199,
+    lastAppliedCreated: 200,
+  }) === "stale",
+);
+check(
+  "an event at the already-applied timestamp is ignored",
+  stripeEventDisposition({
+    eventId: "evt_same_second",
+    eventCreated: 200,
+    lastAppliedCreated: 200,
+  }) === "stale",
+);
+check(
+  "a duplicate Stripe event ID is ignored regardless of timestamp",
+  stripeEventDisposition({
+    eventId: "evt_replay",
+    recordedEventId: "evt_replay",
+    eventCreated: 300,
+    lastAppliedCreated: 200,
+  }) === "duplicate",
 );
 
 console.log(`\n${checks - failures}/${checks} checks passed.`);

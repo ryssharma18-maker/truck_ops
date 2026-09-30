@@ -28,21 +28,29 @@ export default async function MaintenancePage() {
   const in30 = new Date(Date.now() + 30 * DAY);
   const in90 = new Date(Date.now() + 90 * DAY);
 
-  const [shopTrucks, licenceExpiring, complianceExpiring, complianceCount] =
+  const [shopTrucks, shopTruckCount, licenceExpiring, complianceExpiring, complianceCount] =
     await Promise.all([
       prisma.truck.findMany({
         where: { userId: user.id, status: "maintenance" },
         orderBy: { truckNumber: "asc" },
+        // Capped: `shopTrucks.length` was rendered as "Trucks in shop", and an
+        // unbounded read is a lot of rows to pull for a maintenance list.
+        take: 200,
         include: { _count: { select: { loads: true } } },
       }),
+      prisma.truck.count({ where: { userId: user.id, status: "maintenance" } }),
       prisma.driver.findMany({
         where: { userId: user.id, licenseExpiry: { not: null, lte: in90 } },
         orderBy: { licenseExpiry: "asc" },
+        // Bounded by the 90-day window and the take below; `upcoming` merges
+        // these two lists, so a cap here is what keeps the page predictable.
+        take: 200,
         include: { assignedTruck: { select: { truckNumber: true } } },
       }),
       prisma.complianceDocument.findMany({
         where: { userId: user.id, expiryDate: { not: null, lte: in90 } },
         orderBy: { expiryDate: "asc" },
+        take: 200,
       }),
       prisma.complianceDocument.count({ where: { userId: user.id } }),
     ]);
@@ -72,12 +80,15 @@ export default async function MaintenancePage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           label="Trucks in maintenance"
-          value={shopTrucks.length}
+          value={shopTruckCount}
           icon={<Wrench className="h-4 w-4 text-amber-400" />}
         />
         <StatCard
           label="Licences expiring ≤90d"
           value={licenceExpiring.length}
+          hint={
+            licenceExpiring.length === 200 ? "showing the first 200" : undefined
+          }
           icon={<CalendarClock className="h-4 w-4 text-cyan-400" />}
         />
         <StatCard

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { downloadFile } from "@/lib/services/storageService";
 import { extractDocument, type ExtractableDocType } from "@/lib/services/aiService";
 import { HttpError } from "@/lib/errors";
+import { enforceRateLimit } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,9 @@ const extractable = z.enum([
 export const POST = handle(
   async (req: NextRequest, { params }: { params: { id: string } }) => {
     const user = await requireUser();
+    // Each call is a billed Gemini request, and this route is trivially
+    // replayable against any document id the caller owns.
+    await enforceRateLimit("aiParse", user.id);
 
     const doc = await prisma.document.findFirst({
       where: { id: params.id, userId: user.id },

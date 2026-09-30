@@ -109,16 +109,42 @@ One forgotten `userId` leaks another fleet's loads with no error and no warning.
 
 ## Not built yet
 
-Stripe checkout and the transactional email service are stubbed out. Both need
-live credentials (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and
-`RESEND_API_KEY` or `SENDGRID_API_KEY`) before they can be exercised. The
-Settings page shows which integrations are configured, reading only booleans
-from the server environment.
+Both Stripe and the transactional email service are implemented but need live
+credentials before they can be exercised end to end
+(`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `RESEND_API_KEY` or
+`SENDGRID_API_KEY`). The Settings page shows which integrations are configured,
+reading only booleans from the server environment.
 
 Inbound email works end to end but has not been run against a live provider.
 `POST /api/webhooks/inbound-email` accepts either a raw `message/rfc822` body
 or a JSON envelope, and returns 503 until a webhook secret is set — it fails
 closed and will not accept unsigned mail.
+
+## Transactional email
+
+Outbound mail is Resend or SendGrid, chosen by whichever key is set, Resend
+first. Set `OUTBOUND_FROM_EMAIL` to a domain you have verified with that
+provider: SPF and DMARC will otherwise reject or spam-filter everything, and a
+send that lands nowhere still reports success to the carrier.
+
+`POST /api/invoices/[id]/send` emails an invoice to the broker it is billed to
+and records the attempt in `email_logs`. Two details worth knowing:
+
+- The invoice is fetched with `userId` in the `where` clause, so another
+  carrier's invoice id returns 404. Prisma bypasses RLS, so that clause is the
+  only boundary.
+- `sentAt` and the status change are written only after the provider accepts
+  the message, and a failed log write is reported rather than thrown. The
+  email has already left by then, so letting a logging error propagate would
+  tell the caller the send failed — and a caller retrying on error would send
+  the broker a duplicate invoice.
+
+The invoices page hides its send buttons and explains what is missing when no
+provider is configured, rather than offering a button that cannot work.
+
+```bash
+npm run verify:email-send   # 45 offline checks: templates, escaping, sender
+```
 
 ## Billing
 
@@ -144,7 +170,10 @@ Setup:
 
 Handled events: `checkout.session.completed`,
 `customer.subscription.created|updated|deleted`, and
-`customer.subscription.trial_will_end`.
+`customer.subscription.trial_will_end`. Verified event IDs are recorded in the
+same transaction as subscription changes. Subscription updates are serialized
+per account and events older than the last applied Stripe `created` timestamp
+are acknowledged without changing entitlements.
 
 The webhook fails closed. With no secret it returns 503 and changes nothing,
 because an unsigned `customer.subscription.updated` would otherwise be a way to
@@ -155,16 +184,23 @@ after the signature verifies.
 Verify the signature logic offline and the route end to end:
 
 ```bash
-npm run verify:stripe          # 33 offline checks, no server needed
+npm run verify:stripe          # signature, plan, and event-ordering checks
 npm run verify:stripe:webhook  # needs a dev server and a matching secret
+npm run verify:stripe:webhook-db # needs dev server + DB; creates/deletes a test user
+npm run verify:auth            # auth classification and signup provisioning
+npm run verify:booking-errors  # booking 404 vs infrastructure errors
 ```
 
 ## Verification status
 
 `npm run typecheck`, `npm run lint`, `npm run build`, `npm run verify:secrets`,
-`npm run verify:email`, `npm run verify:webhook` and `npm run verify:stripe`
-all pass, and all 21 dashboard and public pages return 200 against a seeded
-database.
+`npm run verify:email`, `npm run verify:email-send`, `npm run verify:webhook` and
+`npm run verify:stripe` all pass.
+
+Route behaviour with no session, which is what CI can assert without a browser:
+public pages return 200, dashboard pages redirect to `/login` with a 307, and
+protected API routes return a 401 JSON body. Signed-in page rendering still
+wants a human check with a real session.
 
 Two network notes, both specific to running from a Windows dev box rather than
 the deployed app:
@@ -172,9 +208,20 @@ the deployed app:
 - **Use the connection pooler.** Some ISPs transparently proxy port 5432, which
   makes `db.<ref>.supabase.co` resolve to a private address and fail with
   `Can't reach database server`. The pooler is unaffected.
-- **Expect intermittent database drops on the pooler from home.** Requests fail
-  with `Can't reach database server` even when the pooler is configured
-  correctly, and succeed on retry. A Vercel deployment is unaffected.
+- **`connect_timeout=30` is not optional on a slow link.** Prisma's default
+  connect timeout is 5 seconds. A cold TLS handshake through a transparent proxy
+  took 2.4s–11.6s on this network, so about one connection in fifteen failed
+  with `P1001: Can't reach database server` on a perfectly healthy host.
+  Measured over 15 attempts per port: `5432` failed 1, `6543` failed 1 — the
+  port is not the variable. Raising the timeout took the same probe to 24/24.
+
+When you see that error, Next.js prints advice to move `DATABASE_URL` onto `6543`
+and `DIRECT_URL` onto `5432`. The split is worth having regardless — it is what
+`.env.example` documents and what serverless wants — but it does not fix a
+timeout, and the error it prints is misleading about the cause. Check the
+timeout first.
+
+A Vercel deployment is unaffected by both.
 
 The RLS script in `supabase/rls-policies.sql` has **not** been executed against
 your Supabase project — the verification queries in its section 6 need to be

@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
 import { handle, ok } from "@/lib/api";
-import { requireUser, serialize } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { updateProfileSchema } from "@/lib/validation";
+import { publicProfile } from "@/lib/profile";
 import { HttpError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/user/profile — the caller's carrier profile. */
 export const GET = handle(async () => {
   const user = await requireUser();
-  return ok(serialize(user));
+  return ok(publicProfile(user));
 });
 
 /** PATCH /api/user/profile — update the carrier profile fields. */
@@ -33,5 +34,5 @@ export const PATCH = handle(async (req: NextRequest) => {
   });
 
   if (!updated) throw new HttpError(404, "Profile not found", "not_found");
-  return ok(serialize(updated));
+  return ok(publicProfile(updated));
 });

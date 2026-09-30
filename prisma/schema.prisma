@@ -9,31 +9,32 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @db.Uuid
-  email               String               @unique
-  fullName            String?              @map("full_name")
-  companyName         String?              @map("company_name")
-  phone               String?
-  dotNumber           String?              @map("dot_number")
-  mcNumber            String?              @map("mc_number")
-  stripeCustomerId    String?              @unique @map("stripe_customer_id")
-  subscriptionPlan    SubscriptionPlan     @default(trial) @map("subscription_plan")
-  truckCount          Int                  @default(1) @map("truck_count")
-  inboxEmail          String               @unique @map("inbox_email")
-  createdAt           DateTime             @default(now()) @map("created_at")
-  updatedAt           DateTime             @updatedAt @map("updated_at")
-  brokers             Broker[]
-  complianceDocuments ComplianceDocument[]
-  detentionRecords    DetentionRecord[]
-  documents           Document[]
-  drivers             Driver[]
-  emailLogs           EmailLog[]
-  iftaRecords         IftaRecord[]
-  invoices            Invoice[]
-  loads               Load[]
-  notifications       Notification[]
-  subscriptions       Subscription[]
-  trucks              Truck[]
+  id                                 String               @id @db.Uuid
+  email                              String               @unique
+  fullName                           String?              @map("full_name")
+  companyName                        String?              @map("company_name")
+  phone                              String?
+  dotNumber                          String?              @map("dot_number")
+  mcNumber                           String?              @map("mc_number")
+  stripeCustomerId                   String?              @unique @map("stripe_customer_id")
+  lastStripeSubscriptionEventCreated BigInt               @default(0) @map("last_stripe_subscription_event_created")
+  subscriptionPlan                   SubscriptionPlan     @default(trial) @map("subscription_plan")
+  truckCount                         Int                  @default(1) @map("truck_count")
+  inboxEmail                         String               @unique @map("inbox_email")
+  createdAt                          DateTime             @default(now()) @map("created_at")
+  updatedAt                          DateTime             @updatedAt @map("updated_at")
+  brokers                            Broker[]
+  complianceDocuments                ComplianceDocument[]
+  detentionRecords                   DetentionRecord[]
+  documents                          Document[]
+  drivers                            Driver[]
+  emailLogs                          EmailLog[]
+  iftaRecords                        IftaRecord[]
+  invoices                           Invoice[]
+  loads                              Load[]
+  notifications                      Notification[]
+  subscriptions                      Subscription[]
+  trucks                             Truck[]
 
   // Shipping vertical
   shippingVessels    ShippingVessel[]
@@ -128,7 +129,14 @@ model Load {
   fuelSurcharge      Decimal           @default(0) @map("fuel_surcharge") @db.Decimal(10, 2)
   detentionAmount    Decimal           @default(0) @map("detention_amount") @db.Decimal(10, 2)
   lumperAmount       Decimal           @default(0) @map("lumper_amount") @db.Decimal(10, 2)
-  // Generated column — maintained by Postgres, never written by the app.
+  // GENERATED ALWAYS AS (...) STORED in supabase/rls-policies.sql, which
+  // Postgres builds from these same four rate columns. Prisma cannot express
+  // generated columns, so it is declared here as a plain decimal with a default
+  // and the app never writes it. DO NOT add it to an insert or update: Postgres
+  // rejects non-DEFAULT values on a generated column. Expect
+  // `prisma migrate diff` to want to "revert" it to a plain column - that
+  // suggestion is wrong, ignore it. The live column may be plain (generated
+  // conversion is separate) or generated; either way, never write it.
   totalInvoiceAmount Decimal           @default(0) @map("total_invoice_amount") @db.Decimal(10, 2)
   status             LoadStatus        @default(pending)
   notes              String?
@@ -308,6 +316,60 @@ model Subscription {
 
   @@index([userId])
   @@map("subscriptions")
+}
+
+/// Ledger of Stripe webhook events that have been applied.
+///
+/// Stripe delivers at-least-once and out of order, and it will redeliver any
+/// event that does not get a 2xx within ~72h. Without a ledger, a replayed
+/// `customer.subscription.updated` rewinds currentPeriodEnd and a replayed
+/// `customer.subscription.deleted` resets subscriptionPlan to trial, so
+/// entitlements walk backwards with no error anywhere.
+///
+/// `id` is the Stripe `event.id` (evt_...), which is globally unique, so the
+/// primary key is the dedup mechanism: the insert is attempted inside the same
+/// transaction as the state change, and a unique violation means "already
+/// applied" — which is answered with 200, not a retryable error.
+///
+/// The owner is null for ignored events that cannot be tied to an account;
+/// handled subscription events store the resolved user ID.
+model StripeEvent {
+  id          String   @id
+  type        String
+  /// Webhook endpoint path, so several Stripe endpoints can share the table.
+  source      String   @default("stripe") @db.VarChar(32)
+  /// True when the event was ignored because its type is not handled. Kept so
+  /// that adding a handler later does not silently skip historical events.
+  ignored     Boolean  @default(false)
+  userId      String?  @map("user_id") @db.Uuid
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@index([type])
+  @@index([userId])
+  @@index([processedAt])
+  @@map("stripe_events")
+}
+
+/// Fixed-window rate limit counters.
+///
+/// Deliberately in Postgres rather than in memory or Redis: serverless
+/// functions are short-lived and horizontally scaled, so an in-process Map
+/// would reset on every cold start and would not be shared between instances.
+/// That makes it useless as a spend control, which is the only reason the AI
+/// and upload routes need one. A table plus a single conditional upsert is
+/// atomic without any new infrastructure.
+///
+/// `bucketKey` is a deterministic string the caller composes, e.g.
+/// "ai-parse:<userId>" or "signup:<ip>". It is hashed to keep it inside the
+/// index key size limit and to avoid storing raw IPs under a guessable name.
+model RateLimit {
+  bucketKey   String   @id @map("bucket_key") @db.VarChar(64)
+  count       Int      @default(0)
+  windowStart DateTime @default(now()) @map("window_start")
+  expiresAt   DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("rate_limits")
 }
 
 enum SubscriptionPlan {

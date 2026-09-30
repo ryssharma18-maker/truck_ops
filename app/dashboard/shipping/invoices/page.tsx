@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Receipt, TrendingUp, Clock, AlertTriangle } from "lucide-react";
 import { requirePageUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { totalsByCurrency, describeTotals } from "@/lib/money";
 import {
   DataTable,
   TableRow,
@@ -22,27 +23,38 @@ export default async function ShippingInvoicesPage() {
   const userId = user.id;
   const now = new Date();
 
-  const [invoices, outstanding, overdueCount, overdueValue, paidTotal] = await Promise.all([
+  const [invoices, total, outstanding, overdueCount, overdueValue, paidTotal] = await Promise.all([
     prisma.shippingInvoice.findMany({
       where: { userId },
       orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
       take: 200,
       include: { booking: { select: { id: true, bookingNumber: true } } },
     }),
-    prisma.shippingInvoice.aggregate({
+    prisma.shippingInvoice.count({ where: { userId } }),
+    // groupBy, not aggregate: `currency` is free text on this model, so
+    // aggregating `amount` would add euros to dollars and report the result as
+    // USD. See lib/money.ts.
+    prisma.shippingInvoice.groupBy({
+      by: ["currency"],
       where: { userId, status: { in: ["sent", "overdue"] } },
       _sum: { amount: true },
     }),
     prisma.shippingInvoice.count({ where: { userId, status: "overdue" } }),
-    prisma.shippingInvoice.aggregate({
+    prisma.shippingInvoice.groupBy({
+      by: ["currency"],
       where: { userId, status: "overdue" },
       _sum: { amount: true },
     }),
-    prisma.shippingInvoice.aggregate({
+    prisma.shippingInvoice.groupBy({
+      by: ["currency"],
       where: { userId, status: "paid" },
       _sum: { amount: true },
     }),
   ]);
+
+  const outstandingTotals = totalsByCurrency(outstanding);
+  const overdueTotals = totalsByCurrency(overdueValue);
+  const paidTotals = totalsByCurrency(paidTotal);
 
   return (
     <div className="space-y-6 p-6 pt-8 lg:p-8">
@@ -54,23 +66,26 @@ export default async function ShippingInvoicesPage() {
       <div className="grid gap-4 sm:grid-cols-4">
         <StatCard
           label="Invoices"
-          value={invoices.length}
+          value={total}
+          hint={total > invoices.length ? `showing the ${invoices.length} most urgent` : undefined}
           icon={<Receipt className="h-4 w-4 text-sky-400" />}
         />
         <StatCard
           label="Outstanding"
-          value={formatMoney(outstanding._sum?.amount?.toNumber() ?? 0)}
+          value={outstandingTotals.text}
+          hint={outstandingTotals.hint}
           icon={<Clock className="h-4 w-4 text-amber-400" />}
         />
         <StatCard
           label="Overdue"
           value={overdueCount}
-          hint={formatMoney(overdueValue._sum.amount?.toNumber() ?? 0)}
+          hint={overdueTotals.hint || undefined}
           icon={<AlertTriangle className="h-4 w-4 text-rose-400" />}
         />
         <StatCard
           label="Collected"
-          value={formatMoney(paidTotal._sum.amount?.toNumber() ?? 0)}
+          value={paidTotals.text}
+          hint={paidTotals.hint}
           icon={<TrendingUp className="h-4 w-4 text-emerald-400" />}
         />
       </div>
@@ -102,9 +117,8 @@ export default async function ShippingInvoicesPage() {
 
       {overdueCount > 0 ? (
         <p className="text-xs text-slate-600">
-          {overdueCount} invoice{overdueCount === 1 ? " is" : "s are"} past due — total{" "}
-          {formatMoney(overdueValue._sum.amount?.toNumber() ?? 0)} outstanding as of{" "}
-          {formatDate(now)}.
+          {overdueCount} invoice          {overdueCount === 1 ? " is" : "s are"} past due — {describeTotals(overdueTotals)}{" "}
+          outstanding as of {formatDate(now)}.
         </p>
       ) : null}
     </div>

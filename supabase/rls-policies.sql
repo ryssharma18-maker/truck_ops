@@ -2,6 +2,23 @@
 -- Run this AFTER `npx prisma migrate deploy`, in the Supabase SQL editor.
 -- Order matters: 1) generated column, 2) inbox email helper + auth trigger,
 -- 3) RLS enable, 4) policies, 5) storage policies.
+--
+-- DO NOT run this file to apply a single missing table. It is a full,
+-- from-scratch script, and section 1 recreates total_invoice_amount as a
+-- generated column that conflicts with prisma/schema.prisma, where
+-- totalInvoiceAmount is a plain Decimal. Small additions belong in a migration
+-- under prisma/migrations, the way the following were done:
+--
+--   20260927000000_rls_new_tables        stripe_events, rate_limits
+--   20260927010000_rls_shipping_tables  the seven shipping_* tables
+--
+-- Both of those were missing here while this file claimed to cover them. The
+-- file was correct and the live database was not: all seven shipping_* tables
+-- had rowsecurity = false with zero policies, so any client holding the anon
+-- key could read and write every carrier's maritime data. Run the section 6
+-- queries after any change here; `npm run verify:workflow` checks that every
+-- user_id table in the schema is accounted for, but only the live queries can
+-- confirm the database agrees.
 
 -- =====================================================================
 -- 1. total_invoice_amount as a real generated column
@@ -149,6 +166,15 @@ ALTER TABLE shipping_manifests   FORCE ROW LEVEL SECURITY;
 ALTER TABLE shipping_documents   FORCE ROW LEVEL SECURITY;
 ALTER TABLE shipping_invoices    FORCE ROW LEVEL SECURITY;
 
+-- Added with the rate limit / Stripe ledger migration. Neither is covered by
+-- the user_id policy loop in section 4; both are intentionally policy-free.
+-- See prisma/migrations/20260927000000_rls_new_tables for why granting a
+-- tenant access to either one is a billing-integrity or rate-limit bypass.
+ALTER TABLE stripe_events        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rate_limits          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stripe_events        FORCE ROW LEVEL SECURITY;
+ALTER TABLE rate_limits          FORCE ROW LEVEL SECURITY;
+
 -- =====================================================================
 -- 4. Policies
 -- =====================================================================
@@ -200,6 +226,25 @@ DROP POLICY IF EXISTS subscriptions_select_own ON subscriptions;
 CREATE POLICY subscriptions_select_own ON subscriptions
   FOR SELECT TO authenticated
   USING (user_id = (SELECT auth.uid()));
+
+-- stripe_events and rate_limits: RLS enabled, deliberately NO policy.
+--
+-- This is the one place where the section 6 "RLS on but no policy" check is
+-- expected to return rows rather than flagging a mistake. An empty result from
+-- that query would mean someone added a tenant-facing policy to one of them.
+--
+-- The reasons are specific rather than general caution:
+--   * stripe_events is a webhook idempotency ledger keyed by event id. A tenant
+--     who can write their own rows can delete a handled event to force a
+--     replay, or pre-insert a future event id to make the real one look
+--     already-processed. Both are billing-integrity attacks.
+--   * rate_limits has no user_id; bucket_key is derived from the client IP or
+--     email being limited. A tenant who can write it can reset their own
+--     bucket between requests, which defeats the limiter for themselves and
+--     for everyone sharing that egress IP.
+--
+-- The service role bypasses RLS, which is what both the webhook and the
+-- limiter rely on. Do not add an <table>_owner_all policy to either one.
 
 -- =====================================================================
 -- 5. Storage
@@ -269,12 +314,15 @@ $$;
 --   SELECT tablename FROM pg_tables
 --   WHERE schemaname = 'public' AND rowsecurity = FALSE;
 --
--- Tables in public with RLS on but no policy (these deny everything,
--- which is safe but usually a mistake):
+-- Tables in public with RLS on but no policy (these deny everything, which is
+-- safe but usually a mistake). stripe_events and rate_limits are the two
+-- deliberate exceptions, per section 4:
 --
 --   SELECT t.tablename FROM pg_tables t
 --   LEFT JOIN pg_policies p ON p.tablename = t.tablename
 --   WHERE t.schemaname = 'public' AND t.rowsecurity AND p.policyname IS NULL;
+--
+-- Should return exactly: rate_limits, stripe_events.
 --
 -- Cross-tenant read attempt — must return zero rows for any uid that is not
 -- the row owner. Run with :'uid' set to a real auth.users id:

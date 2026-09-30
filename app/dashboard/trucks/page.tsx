@@ -19,26 +19,36 @@ export const metadata: Metadata = { title: "Trucks | TruckOps AI" };
 export default async function TrucksPage() {
   const user = await requirePageUser();
 
-  const [trucks, active, inMaintenance] = await Promise.all([
+  const [trucks, total, active, inMaintenance] = await Promise.all([
     prisma.truck.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
+      // Capped: a fleet list is rendered in full, so an unbounded read plus a
+      // per-row `_count` and included drivers is the largest query in the app.
+      take: 200,
       include: { drivers: { select: { id: true, fullName: true } }, _count: { select: { loads: true } } },
     }),
+    // A real count, because the query above is capped and `trucks.length` would
+    // report "200" as the fleet size.
+    prisma.truck.count({ where: { userId: user.id } }),
     prisma.truck.count({ where: { userId: user.id, status: "active" } }),
     prisma.truck.count({ where: { userId: user.id, status: "maintenance" } }),
   ]);
+
+  const truncated = total > trucks.length;
 
   return (
     <div className="space-y-6 p-6 pt-8 lg:p-8">
       <PageHeader
         title="Trucks"
-        subtitle={`${trucks.length} truck${trucks.length === 1 ? "" : "s"} in your fleet`}
+        subtitle={`${total} truck${total === 1 ? "" : "s"} in your fleet${
+          truncated ? ` · showing the ${trucks.length} most recent` : ""
+        }`}
         action={<AddTruckModal />}
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total trucks" value={trucks.length} icon={<Truck className="h-4 w-4 text-sky-400" />} />
+        <StatCard label="Total trucks" value={total} icon={<Truck className="h-4 w-4 text-sky-400" />} />
         <StatCard label="Active" value={active} />
         <StatCard
           label="In maintenance"

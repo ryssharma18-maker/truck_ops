@@ -116,6 +116,15 @@ jobs:
       - name: Authentication and signup hardening checks
         run: npm run verify:auth
 
+      - name: Tenant isolation regression checks
+        run: npm run verify:tenant-isolation
+
+      - name: API contract regression checks
+        run: npm run verify:api-contracts
+
+      - name: Repository database baseline checks
+        run: npm run verify:database-baseline
+
       - name: Booking detail error checks
         run: npm run verify:booking-errors
 

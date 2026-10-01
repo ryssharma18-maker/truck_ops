@@ -1,5 +1,9 @@
 import { supabaseAuthFailure } from "../lib/authFailures";
 import { waitForProvisionedProfile } from "../lib/authProvisioning";
+import { signupSchema } from "../lib/validation";
+import { RATE_LIMITS } from "../lib/rateLimit";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 let failures = 0;
 let checks = 0;
@@ -43,6 +47,81 @@ check(
 console.log("\nSignup profile provisioning");
 
 async function main(): Promise<void> {
+  console.log("\nSignup input and current route contract");
+  const validSignup = signupSchema.safeParse({
+    email: "carrier@example.com",
+    password: "secure-pass-123",
+    fullName: "Carrier User",
+    companyName: "Carrier LLC",
+  });
+  check("valid signup input is accepted", validSignup.success);
+  check(
+    "signup defaults truckCount to one",
+    validSignup.success && validSignup.data.truckCount === 1,
+  );
+  check(
+    "duplicate-email candidate passes input validation for provider handling",
+    signupSchema.safeParse({
+      email: "existing@example.com",
+      password: "secure-pass-123",
+      fullName: "Existing User",
+      companyName: "Existing LLC",
+    }).success,
+  );
+  check(
+    "invalid email and password are rejected",
+    !signupSchema.safeParse({
+      email: "not-an-email",
+      password: "short",
+      fullName: "User",
+      companyName: "Company",
+    }).success,
+  );
+  check(
+    "missing company name is rejected by the server signup contract",
+    !signupSchema.safeParse({
+      email: "user@example.com",
+      password: "secure-pass-123",
+      fullName: "User",
+    }).success,
+  );
+  check(
+    "anonymous signup is configured for an hourly rate limit",
+    RATE_LIMITS.signup.limit === 5 && RATE_LIMITS.signup.windowSeconds === 3600,
+  );
+
+  const signupUi = readFileSync(
+    path.resolve(process.cwd(), "app/signup/page.tsx"),
+    "utf8",
+  );
+  const signupRoute = readFileSync(
+    path.resolve(process.cwd(), "app/api/auth/signup/route.ts"),
+    "utf8",
+  );
+  check(
+    "current signup page calls Supabase Auth directly",
+    signupUi.includes("supabase.auth.signUp"),
+  );
+  check(
+    "current signup page establishes/branches on the returned session",
+    signupUi.includes("if (data.session)") &&
+      signupUi.includes('router.replace("/dashboard")'),
+  );
+  check(
+    "signup page shows confirmation flow when no session is returned",
+    signupUi.includes("Check your email to confirm your account"),
+  );
+  check(
+    "server signup route separately applies rate limiting and profile provisioning",
+    signupRoute.includes('enforceRateLimit("signup"') &&
+      signupRoute.includes("waitForProvisionedProfile"),
+  );
+  check(
+    "server signup route translates provider rejection to signup error",
+    signupRoute.includes("Unable to create an account with the supplied details") &&
+      signupRoute.includes('"signup_failed"'),
+  );
+
   const profile = { id: "profile-1" };
   let reads = 0;
   const provisioned = await waitForProvisionedProfile(

@@ -116,6 +116,9 @@ jobs:
       - name: Authentication and signup hardening checks
         run: npm run verify:auth
 
+      - name: Demo seed safety checks
+        run: npm run verify:seed-safety
+
       - name: Upload security checks
         run: npm run verify:upload-security
 

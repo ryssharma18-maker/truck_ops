@@ -52,23 +52,55 @@ npm run db:deploy               # or db:migrate when editing the schema
 Then open the Supabase SQL editor and run the whole of `supabase/rls-policies.sql`. This step is not optional: it installs the trigger that creates a `public.users` row when someone signs up. Without it, signup succeeds and then every subsequent request 500s.
 
 ```bash
-npm run db:seed
 npm run dev
 ```
 
-The seed defaults to creating and seeding `demo@truckops.ai` / `demo1234`,
-which needs the real `service_role` key because it creates a Supabase login.
-To seed an account that already exists instead — no service_role key needed —
-set `SEED_EMAIL`:
+### Destructive demo seed (non-production only)
 
-```bash
-SEED_EMAIL="you@example.com" npm run db:seed
+`npm run db:seed` never chooses an account by default. It refuses when the
+process or selected target environment is marked production, and requires an
+explicit non-production environment, exact target email, and matching
+destructive confirmation. The selected email must already have a
+`public.users` profile; the seed will not create, remove, or reassign auth or
+profile accounts. It also verifies that `DATABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_URL` identify the same Supabase project and that the
+project ref is in the seed's checked-in non-production allowlist. No
+non-production project is currently allowlisted, so seeding must fail closed
+before it reads the target profile or performs any writes. The confirmed
+production project ref `papddtmsiajajcvdrody` is rejected and must not be
+allowlisted. Seeding remains unavailable until a real non-production Supabase
+project is independently confirmed and deliberately allowlisted.
+
+After a non-production Supabase project has been independently confirmed and
+added to the allowlist, explicitly select and confirm its existing demo
+profile in PowerShell before running the seed:
+
+```powershell
+$env:SEED_TARGET_ENVIRONMENT = "development"
+$env:SEED_EMAIL = "demo@truckops.ai"
+$env:SEED_CONFIRM_DESTRUCTIVE = "DELETE ALL DATA FOR demo@truckops.ai"
+npm run db:seed
 ```
 
-The seed wipes and rebuilds only that account's rows. A JSON backup of the
-previous state is written to the temp directory before a destructive change, and
-`node scripts/reassign-demo-data.cjs <email>` moves an existing dataset between
-accounts.
+For a preview environment, use `SEED_TARGET_ENVIRONMENT=preview` and a
+preview-only account/database. The seed prints the selected profile and
+per-table deletion counts before any mutation. Every row deletion is scoped to
+the resolved `public.users.id`; the profile fields are also reset to demo
+values. **The seed does not create a backup.** Verify the database target and
+arrange an independent backup before approving any destructive run. The
+checked-in project allowlist is the authority for which Supabase project refs
+the destructive seed accepts; review it deliberately when adding a new
+non-production project.
+
+The demo password is not changed by default. To reset it, explicitly set
+`SEED_RESET_DEMO_PASSWORD=true`; this is accepted only for the selected
+`demo@truckops.ai` profile and requires a usable service-role key. The reset
+uses the resolved auth user ID after preflight confirmation. Do not set this
+for customer accounts.
+
+`node scripts/reassign-demo-data.cjs <email>` remains a separate account
+reassignment utility; it is not part of the guarded seed command and requires
+its own review before use.
 
 > On Windows, stop the dev server before `npm run build` — the dev server
 > holds a lock on the Prisma query engine DLL and `prisma generate` fails with

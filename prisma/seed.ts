@@ -1,19 +1,27 @@
 ﻿/**
- * Seed script - demo fleet and shipping operation for local development and
- * sales demos.
+ * Seed script - explicitly selected demo fleet and shipping account for
+ * non-production development and sales demos.
  *
- *   npm run db:seed
+ * Required: SEED_TARGET_ENVIRONMENT=development|preview,
+ * SEED_EMAIL=<exact target>, and
+ * SEED_CONFIRM_DESTRUCTIVE="DELETE ALL DATA FOR <exact target>". The configured
+ * Supabase project must also match the checked-in non-production allowlist.
  *
- * Creates the Supabase auth user via the Admin API (service role), which fires
- * on_auth_user_created and produces the public.users row. Everything else is
- * inserted with Prisma. Safe to re-run: it wipes and rebuilds the demo user's
- * data only, and never touches other accounts.
+ * Production is always rejected. This replaces all seed-owned rows for the
+ * selected existing profile. It does not create/delete auth users or profiles.
  */
 
 import { PrismaClient, Prisma } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  assertApprovedSeedDatabaseTarget,
+  confirmResolvedSeedTarget,
+  parseDemoPasswordResetRequest,
+  resolveSeedTargetSelection,
+  shouldResetDemoPassword,
+} from "../lib/seedSafety";
 
 /**
  * `prisma db seed` loads only `.env`, but the Supabase credentials normally
@@ -47,14 +55,7 @@ loadEnvLocalFallback();
 
 const prisma = new PrismaClient();
 
-/**
- * Which account the demo data belongs to.
- *
- * Defaults to the shared demo login. Set SEED_EMAIL to seed an existing
- * account instead, which is the only option without a service_role key since
- * creating an auth user needs the Admin API.
- */
-const DEMO_EMAIL = process.env.SEED_EMAIL ?? "demo@truckops.ai";
+const DEMO_EMAIL = "demo@truckops.ai";
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "demo1234";
 
 /**
@@ -78,152 +79,137 @@ function daysFromNow(days: number, hour = 9): Date {
 
 const dec = (n: number) => new Prisma.Decimal(n.toFixed(2));
 
-/**
- * Resolves the account the demo data belongs to and returns its auth UUID.
- *
- * Two paths:
- *
- *  1. A `public.users` row already exists for SEED_EMAIL and no usable
- *     service_role key is configured. This is the normal case when seeding an
- *     existing account, and it needs no Admin API.
- *
- *  2. The account has to be created or its password reset. That needs the
- *     service_role key, and it is the only reason the key is required at all.
- *
- * A `public.users` row is not by itself proof that an auth user exists: an
- * earlier version trusted it and returned early, which let a fabricated row
- * with a hand-written UUID stand in for a real login, so the seed reported
- * success while no password grant could ever succeed. Whenever a real key is
- * available we verify through the Admin API and treat an unbacked row as a
- * hard error.
- */
-async function ensureDemoAuthUser(): Promise<string> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+type SeedTable =
+  | "shippingInvoice"
+  | "shippingDocument"
+  | "shippingManifest"
+  | "shippingContainer"
+  | "shippingBooking"
+  | "shippingVessel"
+  | "shippingPort"
+  | "invoice"
+  | "detentionRecord"
+  | "document"
+  | "iftaRecord"
+  | "load"
+  | "driver"
+  | "truck"
+  | "broker"
+  | "complianceDocument"
+  | "emailLog"
+  | "notification";
 
+const SEED_TABLES: readonly SeedTable[] = [
+  "shippingInvoice",
+  "shippingDocument",
+  "shippingManifest",
+  "shippingContainer",
+  "shippingBooking",
+  "shippingVessel",
+  "shippingPort",
+  "invoice",
+  "detentionRecord",
+  "document",
+  "iftaRecord",
+  "load",
+  "driver",
+  "truck",
+  "broker",
+  "complianceDocument",
+  "emailLog",
+  "notification",
+];
+
+async function getPlannedDeleteCounts(userId: string) {
+  const entries = await Promise.all([
+    prisma.shippingInvoice.count({ where: { userId } }).then((count) => ["shippingInvoice", count] as const),
+    prisma.shippingDocument.count({ where: { userId } }).then((count) => ["shippingDocument", count] as const),
+    prisma.shippingManifest.count({ where: { userId } }).then((count) => ["shippingManifest", count] as const),
+    prisma.shippingContainer.count({ where: { userId } }).then((count) => ["shippingContainer", count] as const),
+    prisma.shippingBooking.count({ where: { userId } }).then((count) => ["shippingBooking", count] as const),
+    prisma.shippingVessel.count({ where: { userId } }).then((count) => ["shippingVessel", count] as const),
+    prisma.shippingPort.count({ where: { userId } }).then((count) => ["shippingPort", count] as const),
+    prisma.invoice.count({ where: { userId } }).then((count) => ["invoice", count] as const),
+    prisma.detentionRecord.count({ where: { userId } }).then((count) => ["detentionRecord", count] as const),
+    prisma.document.count({ where: { userId } }).then((count) => ["document", count] as const),
+    prisma.iftaRecord.count({ where: { userId } }).then((count) => ["iftaRecord", count] as const),
+    prisma.load.count({ where: { userId } }).then((count) => ["load", count] as const),
+    prisma.driver.count({ where: { userId } }).then((count) => ["driver", count] as const),
+    prisma.truck.count({ where: { userId } }).then((count) => ["truck", count] as const),
+    prisma.broker.count({ where: { userId } }).then((count) => ["broker", count] as const),
+    prisma.complianceDocument.count({ where: { userId } }).then((count) => ["complianceDocument", count] as const),
+    prisma.emailLog.count({ where: { userId } }).then((count) => ["emailLog", count] as const),
+    prisma.notification.count({ where: { userId } }).then((count) => ["notification", count] as const),
+  ]);
+  return Object.fromEntries(entries) as Record<SeedTable, number>;
+}
+
+function printSeedPreflight(
+  target: { id: string; email: string },
+  environment: "development" | "preview",
+  counts: Record<SeedTable, number>,
+): void {
+  console.log("\nDESTRUCTIVE SEED PREFLIGHT");
+  console.log(`  environment: ${environment}`);
+  console.log(`  target email: ${target.email}`);
+  console.log(`  target user ID: ${target.id}`);
+  console.log("  planned row deletions:");
+  for (const table of SEED_TABLES) {
+    console.log(`    ${table}: ${counts[table]}`);
+  }
+  console.log(
+    `  total rows: ${Object.values(counts).reduce((sum, count) => sum + count, 0)}`,
+  );
+  console.log("  profile fields will be reset to the demo profile values.");
+  console.log(
+    `  Supabase password reset: ${parseDemoPasswordResetRequest(process.env.SEED_RESET_DEMO_PASSWORD) ? "requested (demo account only)" : "no"}`,
+  );
+  console.log(
+    "  No backup is created by this command; do not proceed unless this replacement is intended.\n",
+  );
+}
+
+async function prepareDemoPasswordReset(
+  target: { id: string; email: string },
+): Promise<(() => Promise<void>) | null> {
+  const resetRequested = parseDemoPasswordResetRequest(
+    process.env.SEED_RESET_DEMO_PASSWORD,
+  );
+  if (!shouldResetDemoPassword(target, resetRequested)) return null;
+  if (!serviceKeyUsable()) {
+    throw new Error(
+      "SEED_RESET_DEMO_PASSWORD=true requires a usable SUPABASE_SERVICE_ROLE_KEY.",
+    );
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) {
     throw new Error(
-      "Seed needs NEXT_PUBLIC_SUPABASE_URL in .env or .env.local",
+      "Password reset requires NEXT_PUBLIC_SUPABASE_URL before the destructive seed operation.",
     );
   }
 
-  const keyUsable = serviceKeyUsable();
-
-  if (!keyUsable) {
-    // No Admin API. Fall back to an existing profile, but say plainly that we
-    // cannot verify the login works.
-    const existing = await prisma.user.findUnique({
-      where: { email: DEMO_EMAIL },
-    });
-    if (!existing) {
-      throw new Error(
-        `No public.users row for ${DEMO_EMAIL} and no usable ` +
-          "SUPABASE_SERVICE_ROLE_KEY to create the login. Either set " +
-          "SEED_EMAIL to an account that already exists, or add the real " +
-          "service_role key from Supabase -> Project Settings -> API.",
-      );
-    }
-    console.log(
-      `  [warn] no service_role key, so the auth login for ${DEMO_EMAIL} ` +
-        `cannot be created or verified. Seeding the existing profile ${existing.id}.`,
-    );
-    return existing.id;
-  }
-
-  // serviceKeyUsable() already proved this is present and well-formed.
-  const admin = createClient(url, serviceKey!, {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const admin = createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-
-  // 1. Does the auth user exist? Search by email rather than trusting
-  //    public.users, which the trigger can populate for deleted auth users.
-  const { data: found, error: findError } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-
-  if (findError) {
-    throw new Error(
-      `Supabase Admin API rejected SUPABASE_SERVICE_ROLE_KEY: ${findError.message}`,
-    );
+  const { data, error } = await admin.auth.admin.getUserById(target.id);
+  if (error) {
+    throw new Error("Could not verify the selected demo auth user.");
+  }
+  if (data.user.email?.toLowerCase() !== target.email) {
+    throw new Error("Selected demo profile does not match the Supabase auth user.");
   }
 
-  const authUser = found.users.find(
-    (u) => u.email?.toLowerCase() === DEMO_EMAIL,
-  );
-
-  let authUserId: string;
-
-  if (authUser) {
-    // 2. Force the known password. A row that exists in public.users but whose
-    //    auth record is gone leaves the seed unable to log in.
+  return async () => {
     const { error: updateError } = await admin.auth.admin.updateUserById(
-      authUser.id,
+      target.id,
       { password: DEMO_PASSWORD, email_confirm: true },
     );
     if (updateError) {
-      throw new Error(
-        `Could not reset the demo password: ${updateError.message}`,
-      );
+      throw new Error("Could not reset the selected demo account password.");
     }
-    authUserId = authUser.id;
-    console.log(`  [ok] demo auth user exists (${authUserId}), password reset`);
-  } else {
-    // 3. No auth user: create one. A pre-existing public.users row with a
-    //    different id is an orphan and will confuse the trigger, so clear it.
-    const orphan = await prisma.user.findUnique({
-      where: { email: DEMO_EMAIL },
-    });
-    if (orphan) {
-      console.log(
-        `  [fix] removing orphaned public.users row ${orphan.id} (no auth user)`,
-      );
-      await wipeDemoData(orphan.id);
-      await prisma.user.delete({ where: { id: orphan.id } });
-    }
-
-    const { data, error } = await admin.auth.admin.createUser({
-      email: DEMO_EMAIL,
-      password: DEMO_PASSWORD,
-      email_confirm: true, // skip the confirmation email for the demo account
-      user_metadata: {
-        full_name: "Marcus Vance",
-        company_name: "Rolling Pines Transport LLC",
-        phone: "+1-555-0142",
-        truck_count: 3,
-      },
-    });
-
-    if (error || !data.user) {
-      throw new Error(`Could not create demo auth user: ${error?.message}`);
-    }
-    authUserId = data.user.id;
-    console.log(`  [ok] created demo auth user (${authUserId})`);
-  }
-
-  // 4. Confirm the public.users row matches the auth id, provisioning it
-  //    directly if the SQL trigger was never installed.
-  const row = await prisma.user.findUnique({ where: { id: authUserId } });
-  if (row) return row.id;
-
-  await prisma.user.create({
-    data: {
-      id: authUserId,
-      email: DEMO_EMAIL,
-      fullName: "Marcus Vance",
-      companyName: "Rolling Pines Transport LLC",
-      phone: "+1-555-0142",
-      subscriptionPlan: "trial",
-      truckCount: 3,
-      inboxEmail: `fleet-rollingpines@${process.env.INBOUND_EMAIL_DOMAIN ?? "inbox.truckops.ai"}`,
-    },
-  });
-  console.log(
-    "  [fix] inserted public.users row directly - run supabase/rls-policies.sql " +
-      "to install the on_auth_user_created trigger for future signups",
-  );
-
-  return authUserId;
+  };
 }
 
 async function wipeDemoData(userId: string) {
@@ -1115,13 +1101,33 @@ async function seedShipping(userId: string) {
 }
 
 async function main() {
-  console.log("Seeding TruckOps AI demo data...");
+  const selection = resolveSeedTargetSelection(process.env);
+  assertApprovedSeedDatabaseTarget(process.env);
+  const resetPasswordRequested = parseDemoPasswordResetRequest(
+    process.env.SEED_RESET_DEMO_PASSWORD,
+  );
+  if (resetPasswordRequested && selection.email !== DEMO_EMAIL) {
+    throw new Error(
+      "SEED_RESET_DEMO_PASSWORD=true is allowed only when SEED_EMAIL is demo@truckops.ai.",
+    );
+  }
+  const selectedProfile = await prisma.user.findUnique({
+    where: { email: selection.email },
+    select: { id: true, email: true },
+  });
+  const target = confirmResolvedSeedTarget(process.env, selectedProfile);
+  const performPasswordReset = await prepareDemoPasswordReset(target);
+  const counts = await getPlannedDeleteCounts(target.id);
+  printSeedPreflight(target, selection.environment, counts);
 
-  const userId = await ensureDemoAuthUser();
-  await wipeDemoData(userId);
+  console.log("Applying the approved non-production seed replacement...");
+  await wipeDemoData(target.id);
+
+  if (performPasswordReset) await performPasswordReset();
+  const passwordWasReset = performPasswordReset !== null;
 
   await prisma.user.update({
-    where: { id: userId },
+    where: { id: target.id },
     data: {
       fullName: "Demo Owner",
       companyName: "Rolling Pines Transport LLC",
@@ -1133,48 +1139,48 @@ async function main() {
     },
   });
 
-  const trucking = await seedTrucking(userId);
-  const shipping = await seedShipping(userId);
+  const trucking = await seedTrucking(target.id);
+  const shipping = await seedShipping(target.id);
 
   await prisma.notification.createMany({
     data: [
       {
-        userId,
+        userId: target.id,
         title: "Invoice overdue",
         type: "error",
         message: "INV-2026-0002 to Coyote Logistics is 10 days past due ($2,240.00).",
         actionUrl: "/dashboard/invoices",
       },
       {
-        userId,
+        userId: target.id,
         title: "Shipping invoice overdue",
         type: "error",
         message: "SINV-2026-0003 is 22 days past due ($18,750.00).",
         actionUrl: "/dashboard/shipping/invoices",
       },
       {
-        userId,
+        userId: target.id,
         title: "Insurance expiring in 25 days",
         type: "warning",
         message: "Great West auto liability certificate needs renewal.",
         actionUrl: "/dashboard/compliance",
       },
       {
-        userId,
+        userId: target.id,
         title: "Certificate of origin expired",
         type: "warning",
         message: "COO-2026-77120 for SHP-2026-0401 lapsed 2 days ago.",
         actionUrl: "/dashboard/shipping/compliance",
       },
       {
-        userId,
+        userId: target.id,
         title: "2 documents need review",
         type: "warning",
         message: "Low-confidence extraction on a lumper receipt and a fuel receipt.",
         actionUrl: "/dashboard/documents",
       },
       {
-        userId,
+        userId: target.id,
         title: "Detention timer running",
         type: "info",
         message: "Load RP-24130 has been on the clock for over 3 hours.",
@@ -1184,13 +1190,10 @@ async function main() {
     ],
   });
 
-  const passwordNote = !serviceKeyUsable()
-      ? `    Account: ${DEMO_EMAIL} (existing login, password unchanged)`
-      : `    Login:  ${DEMO_EMAIL} / ${DEMO_PASSWORD}`;
-
   console.log(`
   Done.
-${passwordNote}
+    Account: ${target.email} (${target.id})
+    Password reset: ${passwordWasReset ? "performed" : "not changed"}
 
     Trucking
       Trucks:    ${trucking.trucks.length}

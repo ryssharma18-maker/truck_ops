@@ -3,10 +3,9 @@ import { handle, ok, fail } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { extractDocument } from "@/lib/services/aiService";
 import { enforceRateLimit } from "@/lib/rateLimit";
+import { parseMultipartFormData, readValidatedUpload } from "@/lib/uploadSecurity";
 
 export const dynamic = "force-dynamic";
-
-const MAX_BYTES = 15 * 1024 * 1024;
 
 /**
  * POST /api/ai/parse-rate-confirm
@@ -18,23 +17,22 @@ const MAX_BYTES = 15 * 1024 * 1024;
  * This is the most expensive route in the app: every call is a Gemini request
  * billed to us, and a 15 MB upload is accepted per call. The per-tenant
  * limiter is the only thing between a script and a large bill, so it runs
- * before the body is read.
+ * before the body is read. The application also counts the request stream
+ * before parsing multipart data; the per-file limit is checked immediately
+ * after parsing and is not an upstream ingress limit.
  */
 export const POST = handle(async (req: NextRequest) => {
   const user = await requireUser();
   await enforceRateLimit("parseRateConfirm", user.id);
 
-  const form = await req.formData();
+  const form = await parseMultipartFormData(req);
   const file = form.get("file");
   if (!(file instanceof File)) return fail("No file uploaded", 400, "missing_file");
-  if (file.size > MAX_BYTES) {
-    return fail("File too large (max 15 MB)", 413, "file_too_large");
-  }
+  const { bytes, mimeType } = await readValidatedUpload(file);
 
-  const bytes = Buffer.from(await file.arrayBuffer());
   const result = await extractDocument(
     bytes,
-    file.type || "application/pdf",
+    mimeType,
     "rate_confirmation",
   );
 

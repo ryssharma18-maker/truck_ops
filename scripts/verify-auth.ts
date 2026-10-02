@@ -1,5 +1,8 @@
 import { supabaseAuthFailure } from "../lib/authFailures";
-import { waitForProvisionedProfile } from "../lib/authProvisioning";
+import {
+  isDuplicateSignupUser,
+  waitForProvisionedProfile,
+} from "../lib/authProvisioning";
 import { signupSchema } from "../lib/validation";
 import { RATE_LIMITS } from "../lib/rateLimit";
 import { readFileSync } from "node:fs";
@@ -78,12 +81,26 @@ async function main(): Promise<void> {
     }).success,
   );
   check(
-    "missing company name is rejected by the server signup contract",
-    !signupSchema.safeParse({
+    "email/password-only signup remains accepted for the current UI",
+    signupSchema.safeParse({
       email: "user@example.com",
       password: "secure-pass-123",
-      fullName: "User",
     }).success,
+  );
+  check(
+    "caller-supplied identity and tenant ids are stripped",
+    (() => {
+      const parsed = signupSchema.parse({
+      email: "user@example.com",
+      password: "secure-pass-123",
+      userId: "forged-user",
+      organizationId: "forged-org",
+      tenantId: "forged-tenant",
+      }) as Record<string, unknown>;
+      return ["userId", "organizationId", "tenantId"].every(
+        (field) => !(field in parsed),
+      );
+    })(),
   );
   check(
     "anonymous signup is configured for an hourly rate limit",
@@ -98,13 +115,24 @@ async function main(): Promise<void> {
     path.resolve(process.cwd(), "app/api/auth/signup/route.ts"),
     "utf8",
   );
-  check(
-    "current signup page calls Supabase Auth directly",
-    signupUi.includes("supabase.auth.signUp"),
+  const supabaseServer = readFileSync(
+    path.resolve(process.cwd(), "lib/supabase/server.ts"),
+    "utf8",
   );
   check(
-    "current signup page establishes/branches on the returned session",
-    signupUi.includes("if (data.session)") &&
+    "signup page uses the rate-limited server signup endpoint",
+    signupUi.includes('fetch("/api/auth/signup"') &&
+      signupUi.includes('credentials: "same-origin"'),
+  );
+  check(
+    "signup page no longer calls Supabase Auth in the browser",
+    !signupUi.includes("supabase.auth.signUp") &&
+      !signupUi.includes("createSupabaseBrowserClient") &&
+      !signupUi.includes("SUPABASE_SERVICE_ROLE_KEY"),
+  );
+  check(
+    "signup page redirects when server reports an established session",
+    signupUi.includes("if (!result?.needsEmailConfirmation)") &&
       signupUi.includes('router.replace("/dashboard")'),
   );
   check(
@@ -112,9 +140,23 @@ async function main(): Promise<void> {
     signupUi.includes("Check your email to confirm your account"),
   );
   check(
+    "duplicate provider responses map to the stable signup error contract",
+    isDuplicateSignupUser({ identities: [] }) &&
+      !isDuplicateSignupUser({ identities: [{ provider: "email" }] }) &&
+      signupRoute.includes("isDuplicateSignupUser"),
+  );
+  check(
     "server signup route separately applies rate limiting and profile provisioning",
     signupRoute.includes('enforceRateLimit("signup"') &&
       signupRoute.includes("waitForProvisionedProfile"),
+  );
+  check(
+    "server signup route preserves provider session through the SSR cookie client",
+    signupRoute.includes("needsEmailConfirmation: data.session === null") &&
+      signupRoute.includes("createSupabaseServerClient") &&
+      supabaseServer.includes("cookieStore.set") &&
+      !signupRoute.includes("access_token") &&
+      !signupRoute.includes("refresh_token"),
   );
   check(
     "server signup route translates provider rejection to signup error",

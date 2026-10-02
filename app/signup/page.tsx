@@ -3,11 +3,9 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export default function SignupPage() {
   const router = useRouter();
-  const supabase = createSupabaseBrowserClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,17 +32,22 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      if (error) {
-        setError(error.message);
+      const result = (await response.json().catch(() => null)) as
+        | { error?: string; needsEmailConfirmation?: boolean }
+        | null;
+      if (!response.ok) {
+        setError(result?.error ?? "Unable to create an account with the supplied details");
         return;
       }
 
-      if (data.session) {
+      if (!result?.needsEmailConfirmation) {
         router.replace("/dashboard");
         router.refresh();
         return;

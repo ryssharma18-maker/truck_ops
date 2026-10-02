@@ -1,5 +1,6 @@
 ﻿import { GoogleGenerativeAI } from "@google/generative-ai";
 import { HttpError } from "@/lib/errors";
+import { validateDocumentContent } from "@/lib/uploadSecurity";
 
 const MODEL = "gemini-1.5-flash";
 
@@ -195,6 +196,7 @@ export async function extractDocument(
   mimeType: string,
   documentType: ExtractableDocType = "other",
 ): Promise<ExtractionResult> {
+  const validatedMimeType = validateDocumentContent(bytes, mimeType);
   const spec = FIELD_SPEC[documentType] ?? FIELD_SPEC.other;
   const model = genAI().getGenerativeModel({
     model: MODEL,
@@ -207,7 +209,12 @@ export async function extractDocument(
   try {
     result = await model.generateContent([
       { text: prompt },
-      { inlineData: { data: Buffer.from(bytes).toString("base64"), mimeType } },
+      {
+        inlineData: {
+          data: Buffer.from(bytes).toString("base64"),
+          mimeType: validatedMimeType,
+        },
+      },
     ]);
   } catch (err) {
     console.error("[ai] Gemini request failed:", err);

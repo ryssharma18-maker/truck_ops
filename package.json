@@ -14,6 +14,7 @@
     "verify:email-send": "tsx scripts/verify-email-send.ts",
     "verify:webhook": "tsx scripts/verify-webhook-auth.ts",
     "verify:auth": "tsx scripts/verify-auth.ts",
+    "verify:upload-security": "tsx scripts/verify-upload-security.ts",
     "verify:tenant-isolation": "tsx scripts/verify-tenant-isolation.ts",
     "verify:api-contracts": "tsx scripts/verify-api-contracts.ts",
     "verify:database-baseline": "tsx scripts/verify-database-baseline.ts",

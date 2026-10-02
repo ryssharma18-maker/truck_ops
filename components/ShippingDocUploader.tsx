@@ -91,13 +91,13 @@ export function ShippingDocUploader({ bookings }: { bookings: { id: string; book
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-56 flex-1">
           <label htmlFor="sdoc-file" className={label}>
-            Document (PDF or image, max 15 MB)
+            Document (PDF, JPEG, PNG, WebP, HEIC/HEIF, TIFF; max 15 MB)
           </label>
           <input
             id="sdoc-file"
             ref={inputRef}
             type="file"
-            accept=".pdf,image/*"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff"
             required
             className="w-full text-sm text-slate-400 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-sm file:text-white"
           />

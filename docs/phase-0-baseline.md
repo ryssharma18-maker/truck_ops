@@ -29,9 +29,10 @@ environment files, execute SQL, or verify a deployed environment.
   redirects unauthenticated protected pages to login. Protected handlers also
   call `requireUser()`.
 
-The signup page and server signup route currently differ in fields, rate
-limiting, and profile provisioning. Phase 0 records that behavior; it does not
-change signup.
+At the Phase 0 baseline, the signup page and server signup route differed in
+fields, rate limiting, and profile provisioning. Phase 1 now routes the page
+through the server endpoint; see `phase-1-security-hardening.md` for the
+implemented behavior and remaining runtime verification limits.
 
 ## Tenant isolation checks
 

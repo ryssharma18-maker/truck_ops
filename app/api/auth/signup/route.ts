@@ -2,7 +2,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { signupSchema } from "@/lib/validation";
 import { ApiError, json, withErrorHandling, serialize } from "@/lib/auth";
-import { waitForProvisionedProfile } from "@/lib/authProvisioning";
+import {
+  isDuplicateSignupUser,
+  waitForProvisionedProfile,
+} from "@/lib/authProvisioning";
 import { clientIp, enforceRateLimit } from "@/lib/rateLimit";
 import type { NextRequest } from "next/server";
 
@@ -35,8 +38,8 @@ export const POST = withErrorHandling(async (req: Request) => {
     options: {
       emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
       data: {
-        full_name: body.fullName,
-        company_name: body.companyName,
+        full_name: body.fullName ?? "",
+        company_name: body.companyName ?? "",
         phone: body.phone ?? "",
         truck_count: body.truckCount,
       },
@@ -62,6 +65,13 @@ export const POST = withErrorHandling(async (req: Request) => {
   const authUser = data.user;
   if (!authUser) {
     throw new ApiError(503, "Signup service is temporarily unavailable", "signup_service_unavailable");
+  }
+  if (isDuplicateSignupUser(authUser)) {
+    throw new ApiError(
+      400,
+      "Unable to create an account with the supplied details",
+      "signup_failed",
+    );
   }
 
   // The auth trigger is the sole profile creator. Never report success until

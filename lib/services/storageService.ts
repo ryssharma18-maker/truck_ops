@@ -65,6 +65,62 @@ export async function uploadFile(
   return `${BUCKET}/${path}`;
 }
 
+function encodedObjectKey(storedPath: string): string {
+  const objectKey = storedPath.startsWith(`${BUCKET}/`)
+    ? storedPath.slice(BUCKET.length + 1)
+    : storedPath;
+  const segments = objectKey.split("/");
+  if (
+    !objectKey ||
+    segments.some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new HttpError(500, "Invalid storage object key", "invalid_storage_key");
+  }
+  return segments.map(encodeURIComponent).join("/");
+}
+
+/** Delete one known object key; this is not a prefix or bucket cleanup. */
+export async function deleteFile(storedPath: string): Promise<void> {
+  const res = await fetch(
+    `${base()}/storage/v1/object/${BUCKET}/${encodedObjectKey(storedPath)}`,
+    {
+      method: "DELETE",
+      headers: { apikey: key(), Authorization: `Bearer ${key()}` },
+    },
+  );
+  if (!res.ok) {
+    throw new HttpError(
+      500,
+      "Could not remove the uploaded file after a failed database write",
+      "storage_cleanup_failed",
+    );
+  }
+}
+
+/**
+ * Keep a single uploaded object from being orphaned when its database row
+ * cannot be created. Cleanup is restricted to the exact returned object key.
+ */
+export async function withUploadCleanup<T>(
+  storedPath: string,
+  createRecord: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await createRecord();
+  } catch (error) {
+    try {
+      await deleteFile(storedPath);
+    } catch (cleanupError) {
+      console.error(
+        "[storage] exact-object cleanup failed",
+        cleanupError instanceof Error ? cleanupError.name : "unknown",
+      );
+      throw cleanupError;
+    }
+    throw error;
+  }
+}
+
 export async function downloadFile(storedPath: string): Promise<Buffer> {
   const p = storedPath.startsWith(`${BUCKET}/`)
     ? storedPath.slice(BUCKET.length + 1)

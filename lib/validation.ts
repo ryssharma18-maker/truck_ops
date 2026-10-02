@@ -7,8 +7,8 @@ export const signupSchema = z.object({
     .string()
     .min(8, "Password must be at least 8 characters")
     .max(72, "Password must be at most 72 characters"),
-  fullName: z.string().min(1).max(120),
-  companyName: z.string().min(1).max(160),
+  fullName: z.string().min(1).max(120).optional(),
+  companyName: z.string().min(1).max(160).optional(),
   phone: z.string().max(32).optional(),
   truckCount: z.coerce.number().int().min(1).max(200).default(1),
 });
@@ -166,4 +166,3 @@ export type CreateLoadInput = z.infer<typeof createLoadSchema>;
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
 export type RateConExtraction = z.infer<typeof rateConExtractionSchema>;
 export type BolExtraction = z.infer<typeof bolExtractionSchema>;
-

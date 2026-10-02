@@ -2,6 +2,12 @@ import { HttpError } from "@/lib/errors";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export function isDuplicateSignupUser(
+  user: { identities?: readonly unknown[] | null } | null,
+): boolean {
+  return user?.identities?.length === 0;
+}
+
 /**
  * Wait for the existing Supabase auth trigger to provision its public.users row.
  * This helper only reads; the database trigger remains the single profile creator.
@@ -31,7 +37,10 @@ export async function waitForProvisionedProfile<T>(
   }
 
   if (lastError) {
-    console.error("[signup] profile provisioning lookup failed", lastError);
+    console.error(
+      "[signup] profile provisioning lookup failed",
+      lastError instanceof Error ? lastError.name : "unknown",
+    );
     throw new HttpError(
       503,
       "Account setup is temporarily unavailable. Please retry shortly.",

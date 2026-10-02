@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { extractDocument, type ExtractableDocType } from "@/lib/services/aiService";
 import { downloadFile } from "@/lib/services/storageService";
 import { enforceRateLimit } from "@/lib/rateLimit";
+import { detectDocumentMime } from "@/lib/uploadSecurity";
 
 export const dynamic = "force-dynamic";
 
@@ -14,26 +15,6 @@ const AI_TYPES: ExtractableDocType[] = [
   "packing_list",
   "other",
 ];
-
-/**
- * ShippingDocument has no mimeType column, so the Gemini inline part is typed
- * from the file extension.
- */
-const MIME_BY_EXT: Record<string, string> = {
-  pdf: "application/pdf",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  heic: "image/heic",
-  tif: "image/tiff",
-  tiff: "image/tiff",
-};
-
-function mimeFromName(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  return MIME_BY_EXT[ext] ?? "application/octet-stream";
-}
 
 /**
  * Run Gemini extraction over a stored shipping document and persist the result
@@ -71,7 +52,11 @@ export const POST = handle(
 
     try {
       const bytes = await downloadFile(doc.fileUrl);
-      const result = await extractDocument(bytes, mimeFromName(doc.fileName), documentType);
+      const mimeType = detectDocumentMime(bytes);
+      if (!mimeType) {
+        throw new HttpError(422, "Stored file content is malformed or unsupported", "invalid_file_content");
+      }
+      const result = await extractDocument(bytes, mimeType, documentType);
 
       const updated = await prisma.shippingDocument.update({
         where: { id: doc.id },

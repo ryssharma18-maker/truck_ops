@@ -116,6 +116,9 @@ jobs:
       - name: Authentication and signup hardening checks
         run: npm run verify:auth
 
+      - name: Upload security checks
+        run: npm run verify:upload-security
+
       - name: Tenant isolation regression checks
         run: npm run verify:tenant-isolation
 
